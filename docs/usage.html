@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ReMux - Interactive Usage Guide</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090a0f;
+      --fg: #e2e8f0;
+      --fg-muted: #94a3b8;
+      --accent: hsl(217, 91%, 60%);
+      --accent-glow: hsla(217, 91%, 60%, 0.15);
+      --accent-glow-strong: hsla(217, 91%, 60%, 0.4);
+      --card-bg: rgba(30, 41, 59, 0.4);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --card-hover: rgba(255, 255, 255, 0.12);
+      --success: #10b981;
+      --success-glow: rgba(16, 185, 129, 0.15);
+      --warning: #f59e0b;
+      --warning-glow: rgba(245, 158, 11, 0.15);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--fg);
+      font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.6;
+      overflow-x: hidden;
+      background-image: 
+        radial-gradient(circle at 10% 20%, rgba(14, 165, 233, 0.05) 0%, transparent 40%),
+        radial-gradient(circle at 90% 80%, rgba(99, 102, 241, 0.05) 0%, transparent 40%);
+      background-attachment: fixed;
+    }
+
+    header {
+      padding: 4rem 2rem 2rem;
+      text-align: center;
+      position: relative;
+    }
+
+    header h1 {
+      font-size: 3.5rem;
+      font-weight: 800;
+      letter-spacing: -0.05em;
+      background: linear-gradient(135deg, #38bdf8 0%, #6366f1 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.5rem;
+    }
+
+    header p {
+      font-size: 1.2rem;
+      color: var(--fg-muted);
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .lang-switcher {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+
+    .lang-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      color: var(--fg-muted);
+      padding: 0.5rem 1.5rem;
+      border-radius: 9999px;
+      cursor: pointer;
+      font-size: 0.95rem;
+      font-weight: 600;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .lang-btn.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+      box-shadow: 0 0 20px var(--accent-glow-strong);
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+
+    .section-title {
+      font-size: 2rem;
+      font-weight: 600;
+      margin: 3rem 0 1.5rem;
+      border-left: 4px solid var(--accent);
+      padding-left: 1rem;
+      letter-spacing: -0.02em;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 2rem;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card:hover {
+      border-color: rgba(255, 255, 255, 0.2);
+      transform: translateY(-4px);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    .card-icon {
+      font-size: 2rem;
+      margin-bottom: 1rem;
+      display: inline-block;
+    }
+
+    .card h3 {
+      font-size: 1.3rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+      color: #fff;
+    }
+
+    .card p {
+      color: var(--fg-muted);
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+
+    /* Key bindings table */
+    .table-container {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      overflow: hidden;
+      margin-bottom: 3rem;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    th, td {
+      padding: 1.2rem 1.5rem;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    th {
+      background: rgba(255, 255, 255, 0.03);
+      font-weight: 600;
+      color: #fff;
+      font-size: 0.95rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    td {
+      font-size: 0.95rem;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    kbd {
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      padding: 0.2rem 0.5rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      color: #fff;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .code-block {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.25rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      overflow-x: auto;
+      margin: 1rem 0;
+      color: #38bdf8;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+
+    .badge-primary {
+      background: var(--accent-glow);
+      color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.2);
+    }
+
+    /* Multi-language content toggles */
+    .lang-section {
+      display: none;
+    }
+
+    .lang-section.active {
+      display: block;
+      animation: fadeIn 0.4s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    footer {
+      padding: 4rem 2rem;
+      text-align: center;
+      color: var(--fg-muted);
+      font-size: 0.9rem;
+      border-top: 1px solid var(--card-border);
+      margin-top: 5rem;
+    }
+
+    footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>ReMux Workspace Guide</h1>
+    <p>Premium interactive developer workspace instructions for local & remote tmux multiplexing.</p>
+    
+    <div class="lang-switcher">
+      <button class="lang-btn active" onclick="switchLang('en')">English</button>
+      <button class="lang-btn" onclick="switchLang('ko')">한국어</button>
+    </div>
+  </header>
+
+  <div class="container">
+
+    <!-- ENGLISH SECTION -->
+    <div id="en-guide" class="lang-section active">
+      
+      <h2 class="section-title">Getting Started</h2>
+      <div class="grid">
+        <div class="card">
+          <span class="card-icon">🔌</span>
+          <div class="badge badge-primary">Hosts Configuration</div>
+          <h3>1. Setup Connection Profiles</h3>
+          <p>Open the primary left sidebar (<kbd>Cmd + B</kbd>). Click **Add Host** to define local or remote SSH servers. ReMux securely stores credentials inside your macOS system Keychain and resolves local SSH aliases automatically.</p>
+        </div>
+
+        <div class="card">
+          <span class="card-icon">🪟</span>
+          <div class="badge badge-primary">Grid Workspace</div>
+          <h3>2. Recursive Split Layouts</h3>
+          <p>Organize splits recursively. Focus a panel and hit <kbd>Ctrl + Shift + E</kbd> to split vertically, or <kbd>Ctrl + Shift + D</kbd> to split horizontally. Change active pane focus smoothly using <kbd>Ctrl + Shift + Tab</kbd>.</p>
+        </div>
+
+        <div class="card">
+          <span class="card-icon">📡</span>
+          <div class="badge badge-primary">Keystroke Relay</div>
+          <h3>3. Synchronized Input Broadcast</h3>
+          <p>Activate the **Broadcast Mode** toggle (Radio Beacon Icon) in the bottom StatusLine. Keystrokes entered in the active terminal will be sent instantly to all terminal splits within the active tab simultaneously.</p>
+        </div>
+      </div>
+
+      <h2 class="section-title">Advanced Operational Features</h2>
+      <div class="grid">
+        <div class="card">
+          <span class="card-icon">⚙️</span>
+          <h3>Performance Sliders</h3>
+          <p>Adjust background diagnostics and tmux hierarchy parsing inside the right settings panel (<kbd>Cmd + ,</kbd>). Toggle presets (Eco, High Performance) to dynamically schedule polling timers.</p>
+        </div>
+
+        <div class="card">
+          <span class="card-icon">🔄</span>
+          <h3>Auto-Recovery heartbeats</h3>
+          <p>On connection drop, ReMux runs non-blocking backend pings. The user is presented with a glassmorphic connection modal that handles exponential retry timers to transparently reconnect without losing scrollback.</p>
+        </div>
+
+        <div class="card">
+          <span class="card-icon">🛡️</span>
+          <h3>Security PasteGuard</h3>
+          <p>Avoid running accidental dangerous scripts. Pasting text containing multiple lines (<kbd>Ctrl + Shift + V</kbd>) triggers the PasteGuard modal to preview and scrub inputs safely.</p>
+        </div>
+      </div>
+
+      <h2 class="section-title">Complete Keyboard Shortcuts Cheat Sheet</h2>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Keystroke</th>
+              <th>Action Description</th>
+              <th>Context</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><kbd>Cmd + B</kbd></td>
+              <td>Toggle Connection Profile sidebar</td>
+              <td>Global Window</td>
+            </tr>
+            <tr>
+              <td><kbd>Cmd + Shift + I</kbd></td>
+              <td>Toggle live tmux Inventory sidebar</td>
+              <td>Global Window</td>
+            </tr>
+            <tr>
+              <td><kbd>Cmd + ,</kbd></td>
+              <td>Toggle telemetries & appearance settings</td>
+              <td>Global Window</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Tab</kbd></td>
+              <td>Focus next workspace tab (circular boundaries)</td>
+              <td>Tabs Bar</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Shift + Tab</kbd></td>
+              <td>Focus next terminal split (circular boundaries)</td>
+              <td>Terminal Grid</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Shift + E</kbd></td>
+              <td>Divide current pane **Vertically**</td>
+              <td>Active Terminal Pane</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Shift + D</kbd></td>
+              <td>Divide current pane **Horizontally**</td>
+              <td>Active Terminal Pane</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Shift + W</kbd></td>
+              <td>Kill current focused terminal pane</td>
+              <td>Active Terminal Pane</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Shift + C</kbd></td>
+              <td>Copy highlighted text to macOS clipboard (auto-exits drag mode)</td>
+              <td>Terminal Highlight</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Shift + V</kbd></td>
+              <td>Safe-paste macOS clipboard using PasteGuard protections</td>
+              <td>Active Terminal Pane</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Alt + Arrow Keys</kbd></td>
+              <td>Shift pane focus in direct arrow direction</td>
+              <td>Terminal Grid</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+    <!-- KOREAN SECTION -->
+    <div id="ko-guide" class="lang-section">
+      
+      <h2 class="section-title">시작하기</h2>
+      <div class="grid">
+        <div class="card">
+          <span class="card-icon">🔌</span>
+          <div class="badge badge-primary">호스트 구성</div>
+          <h3>1. 연결 프로필 설정</h3>
+          <p>왼쪽 기본 사이드바(<kbd>Cmd + B</kbd>)를 엽니다. **Add Host**를 클릭하여 로컬 또는 원격 SSH 서버를 추가하세요. 입력된 정보는 macOS 시스템 키체인(Keychain) 내에 암호화되어 안전하게 보존되며, 로컬 SSH alias 파일 또한 자동으로 분석합니다.</p>
+        </div>
+
+        <div class="card">
+          <span class="card-icon">🪟</span>
+          <div class="badge badge-primary">그리드 워크스페이스</div>
+          <h3>2. 패널 레이아웃 가로/세로 분할</h3>
+          <p>원하는 패널을 포커스하고 단축키 <kbd>Ctrl + Shift + E</kbd>를 누르면 세로 분할, <kbd>Ctrl + Shift + D</kbd>를 누르면 가로 분할이 수행됩니다. 분할된 패널 포커스 변경은 <kbd>Ctrl + Shift + Tab</kbd> 단축키를 이용해 매끄럽게 순환시킬 수 있습니다.</p>
+        </div>
+
+        <div class="card">
+          <span class="card-icon">📡</span>
+          <div class="badge badge-primary">키 입력 동시 릴레이</div>
+          <h3>3. 동시 입력 브로드캐스트 모드</h3>
+          <p>하단 StatusLine의 **Broadcast** 토글 버튼(라디오 전송 형태 아이콘)을 클릭하면 모드가 켜집니다. 활성화 시, 현재 탭 내의 모든 분할 패널 테두리가 네온 펄스 붉은빛 경고로 전환되며 키보드 입력이 모든 패널에 동시 전송됩니다.</p>
+        </div>
+      </div>
+
+      <h2 class="section-title">고급 기능 설명</h2>
+      <div class="grid">
+        <div class="card">
+          <span class="card-icon">⚙️</span>
+          <h3>성능 조절 슬라이더</h3>
+          <p>오른쪽 설정 탭(<kbd>Cmd + ,</kbd>)을 통해 백엔드 텔레메트리(메모리 모니터링) 및 실시간 tmux 트리 인벤토리 분석 주기를 슬라이더로 직접 튜닝할 수 있습니다. 시스템 자원 소모 수준을 맞춤형 프로필 프리셋으로 제어하세요.</p>
+        </div>
+
+        <div class="card">
+          <span class="card-icon">🔄</span>
+          <h3>네트워크 자동 회복 및 재접속</h3>
+          <p>연결 유실이 발생하면 ReMux 백엔드는 백그라운드 핑 루프를 시작하고 화면에는 부드러운 연결 회복 모달이 열립니다. 자동으로 지수 백오프 기반 재연결을 시도하며, 성공 시 기존 tmux 세션에 스크롤 손실 없이 즉시 재부착(Reattach)됩니다.</p>
+        </div>
+
+        <div class="card">
+          <span class="card-icon">🛡️</span>
+          <h3>보안 PasteGuard 기능</h3>
+          <p>실수로 다량의 복사 붙여넣기 실행으로 일어나는 해킹 사고를 예방합니다. 여러 줄 텍스트를 붙여넣으려고 하면(<kbd>Ctrl + Shift + V</kbd>), 붙여넣기 직전 입력을 필터하고 검수해 볼 수 있는 PasteGuard 창이 자동으로 먼저 열립니다.</p>
+        </div>
+      </div>
+
+      <h2 class="section-title">글로벌 단축키 일람표</h2>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>단축키 조합</th>
+              <th>동작 설명</th>
+              <th>사용 위치</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><kbd>Cmd + B</kbd></td>
+              <td>프로필 / 호스트 관리 왼쪽 사이드바 토글</td>
+              <td>전체 창</td>
+            </tr>
+            <tr>
+              <td><kbd>Cmd + Shift + I</kbd></td>
+              <td>실시간 tmux 세션/윈도우 인벤토리 트리 토글</td>
+              <td>전체 창</td>
+            </tr>
+            <tr>
+              <td><kbd>Cmd + ,</kbd></td>
+              <td>테마, 성능 및 다이어그노스틱 설정 탭 토글</td>
+              <td>전체 창</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Tab</kbd></td>
+              <td>다음 탭으로 순환 포커스 전환</td>
+              <td>상단 탭 영역</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Shift + Tab</kbd></td>
+              <td>다음 터미널 분할 패널로 순환 포커스 전환</td>
+              <td>터미널 그리드</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Shift + E</kbd></td>
+              <td>활성화된 패널을 **세로**로 분할</td>
+              <td>활성 터미널 패널</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Shift + D</kbd></td>
+              <td>활성화된 패널을 **가로**로 분할</td>
+              <td>활성 터미널</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Shift + W</kbd></td>
+              <td>활성화된 패널 강제 삭제</td>
+              <td>활성 터미널</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Shift + C</kbd></td>
+              <td>강조된 텍스트 복사 후 즉시 드래그 해제</td>
+              <td>강조 텍스트</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Shift + V</kbd></td>
+              <td>PasteGuard 필터를 적용한 안전한 붙여넣기</td>
+              <td>활성 터미널</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl + Alt + 방향키</kbd></td>
+              <td>방향키 방향의 인접한 분할 패널로 포커스 다이렉트 이동</td>
+              <td>터미널 그리드</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+  </div>
+
+  <footer>
+    <p>ReMux - Crafted for developers. Source code available on <a href="https://github.com/daystar7777/ReMux" target="_blank">GitHub</a>.</p>
+  </footer>
+
+  <script>
+    function switchLang(lang) {
+      document.querySelectorAll('.lang-section').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.lang-btn').forEach(btn => btn.classList.remove('active'));
+      
+      if (lang === 'en') {
+        document.getElementById('en-guide').classList.add('active');
+        document.querySelector('button[onclick*="en"]').classList.add('active');
+      } else {
+        document.getElementById('ko-guide').classList.add('active');
+        document.querySelector('button[onclick*="ko"]').classList.add('active');
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+# Dependency directories
+node_modules/
+app/node_modules/
+
+# Build and distribution directories
+dist/
+app/dist/
+target/
+app/src-tauri/target/
+app/src-tauri/gen/
+
+# macOS files
+.DS_Store
+
+# Local environments
+.env
+.env.*.local
+*.local
+
+# Agent / AI Memory files
+agent-work-mem/
+AIMemory/
+
+# Binary release builds
+REMUX-macOS.zip
