@@ -1,0 +1,72 @@
+name: Release ReMux (Multi-Platform)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            args: ''
+          - platform: 'windows-latest'
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+
+      - name: Install system dependencies (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: |
+          # WiX Toolset is pre-installed on GitHub windows-latest runners
+
+      - name: Install dependencies
+        run: |
+          cd app
+          npm install
+
+      - name: Build and Publish Release
+        uses: tauri-apps/tauri-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ReMux-${{ github.ref_name }}
+          releaseName: "ReMux ${{ github.ref_name }}"
+          releaseBody: |
+            ## ReMux Official Production Release
+            
+            Multi-platform desktop client for tmux sessions, built natively with Tauri & React.
+            
+            ### Supported Platforms
+            - **macOS**: `.app` (Apple Silicon & Intel)
+            - **Windows**: `.msi` (x64 Installer) & standalone `.exe`
+            
+            Designed natively with rich glassmorphism layouts, recursive splits, input broadcasting, and adaptive tmux fallback protocols.
+          releaseDraft: false
+          prerelease: false
+          projectPath: app
+          args: ${{ matrix.args }}
