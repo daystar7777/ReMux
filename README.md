@@ -2,10 +2,10 @@
 
 [![Latest Release](https://img.shields.io/github/v/release/daystar7777/ReMux?color=blue&label=Release)](https://github.com/daystar7777/ReMux/releases)
 [![Build Status](https://img.shields.io/badge/Build-Passed-success)](https://github.com/daystar7777/ReMux)
-[![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey)](https://github.com/daystar7777/ReMux)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-lightgrey)](https://github.com/daystar7777/ReMux)
 [![Language](https://img.shields.io/badge/Language-English%20%7C%20%ED%95%9C%EA%B5%AD%EC%96%B4-orange)](#translations)
 
-**ReMux** is a premium, high-performance desktop GUI manager for **tmux** sessions, built with **Tauri**, **React**, **Jotai**, and **xterm.js**. Designed natively for macOS, ReMux elevates standard terminal multiplexing into an elite, visual, and highly responsive developer workspace.
+**ReMux** is a premium, high-performance desktop GUI manager for **tmux** sessions, built with **Tauri**, **React**, **Jotai**, and **xterm.js**. Designed natively for macOS & Windows, ReMux elevates standard terminal multiplexing into an elite, visual, and highly responsive developer workspace.
 
 ---
 
@@ -18,9 +18,10 @@
 
 ## 📥 Download v0.1.0-Beta
 
-Click below to download the compiled macOS application bundle directly:
+Select your platform below to download the pre-compiled ReMux bundles directly from our latest release:
 
-👉 **[Download ReMux for macOS (v0.1.0-Beta)](https://github.com/daystar7777/ReMux/releases/download/v0.1.0-beta/REMUX-macOS.zip)**
+*   🍎 **macOS**: **[Download ReMux for macOS (v0.1.0-Beta)](https://github.com/daystar7777/ReMux/releases/download/v0.1.0-beta/REMUX-macOS.zip)**
+*   🪟 **Windows**: **[Download ReMux for Windows (.msi)](https://github.com/daystar7777/ReMux/releases)** (Available on the [GitHub Releases](https://github.com/daystar7777/ReMux/releases) page)
 
 ---
 

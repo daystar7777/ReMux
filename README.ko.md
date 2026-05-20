@@ -2,10 +2,10 @@
 
 [![Latest Release](https://img.shields.io/github/v/release/daystar7777/ReMux?color=blue&label=Release)](https://github.com/daystar7777/ReMux/releases)
 [![Build Status](https://img.shields.io/badge/Build-Passed-success)](https://github.com/daystar7777/ReMux)
-[![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey)](https://github.com/daystar7777/ReMux)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-lightgrey)](https://github.com/daystar7777/ReMux)
 [![Language](https://img.shields.io/badge/Language-English%20%7C%20%ED%95%9C%EA%B5%AD%EC%96%B4-orange)](#translations)
 
-**ReMux**는 **Tauri**, **React**, **Jotai**, 그리고 **xterm.js**로 구축된 **tmux** 세션용 고성능 프리미엄 데스크톱 GUI 매니저입니다. macOS 환경에 맞춰 네이티브로 설계되었으며, 기존의 터미널 멀티플렉싱 환경을 매우 부드럽고 시각적이며 직관적인 개발자 전용 워크스페이스로 한 단계 끌어올립니다.
+**ReMux**는 **Tauri**, **React**, **Jotai**, 그리고 **xterm.js**로 구축된 **tmux** 세션용 고성능 프리미엄 데스크톱 GUI 매니저입니다. macOS 및 Windows 환경에 맞춰 네이티브로 설계되었으며, 기존의 터미널 멀티플렉싱 환경을 매우 부드럽고 시각적이며 직관적인 개발자 전용 워크스페이스로 한 단계 끌어올립니다.
 
 ---
 
@@ -18,9 +18,10 @@
 
 ## 📥 v0.1.0-Beta 다운로드
 
-아래 링크를 클릭하면 컴파일이 완료된 macOS 애플리케이션 번들을 바로 다운로드할 수 있습니다:
+원하시는 플랫폼을 선택하여 최신 릴리즈 빌드를 바로 다운로드할 수 있습니다:
 
-👉 **[macOS용 ReMux 다운로드 (v0.1.0-Beta)](https://github.com/daystar7777/ReMux/releases/download/v0.1.0-beta/REMUX-macOS.zip)**
+*   🍎 **macOS**: **[macOS용 ReMux 다운로드 (v0.1.0-Beta)](https://github.com/daystar7777/ReMux/releases/download/v0.1.0-beta/REMUX-macOS.zip)**
+*   🪟 **Windows**: **[Windows용 ReMux 다운로드 (.msi)](https://github.com/daystar7777/ReMux/releases)** ([GitHub Releases](https://github.com/daystar7777/ReMux/releases) 페이지에서 직접 확인 및 다운로드 가능)
 
 ---
 
