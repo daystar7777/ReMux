@@ -18,6 +18,7 @@ export interface Host {
   description?: string;
   proxy_jump?: string;
   identity_agent?: string;
+  skip_host_key_check?: boolean;
   last_resolved_ssh?: {
     address: string;
     port: number;

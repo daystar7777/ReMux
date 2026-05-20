@@ -93,6 +93,7 @@ async fn pty_spawn_ssh_tmux(
     cols: u16,
     rows: u16,
     channel: Channel<PtyEvent>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<String, String> {
     let argv = build_ssh_argv(&SshLaunchArgs {
         user: opt_non_empty(user.as_deref()),
@@ -104,6 +105,7 @@ async fn pty_spawn_ssh_tmux(
         identity_agent: opt_non_empty(identity_agent.as_deref()),
         tmux_session: opt_non_empty(tmux_session.as_deref()),
         tmux_window: opt_non_empty(tmux_window.as_deref()),
+        skip_host_key_check: skip_host_key_check.unwrap_or(false),
     });
     let opts = SpawnOptions {
         auto_password: password,
@@ -169,6 +171,7 @@ async fn tmux_list_remote_panes(
     identity_agent: Option<String>,
     tmux_binary: Option<String>,
     socket_path: Option<String>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<Vec<TmuxPaneIdentity>, String> {
     let remote = build_list_panes(&AttachArgs {
         binary: tmux_binary.as_deref(),
@@ -188,6 +191,7 @@ async fn tmux_list_remote_panes(
             identity_agent: opt_non_empty(identity_agent.as_deref()),
             tmux_session: None,
             tmux_window: None,
+            skip_host_key_check: skip_host_key_check.unwrap_or(false),
         },
         &remote,
         true,
@@ -388,6 +392,7 @@ fn build_remote_tmux_op(
     proxy_jump: Option<&str>,
     identity_agent: Option<&str>,
     remote: Vec<String>,
+    skip_host_key_check: bool,
 ) -> Vec<String> {
     build_ssh_remote_command_argv(
         &SshLaunchArgs {
@@ -400,6 +405,7 @@ fn build_remote_tmux_op(
             identity_agent: opt_non_empty(identity_agent),
             tmux_session: None,
             tmux_window: None,
+            skip_host_key_check,
         },
         &remote,
         true,
@@ -419,6 +425,7 @@ async fn tmux_split_remote_pane(
     direction: String,
     tmux_binary: Option<String>,
     socket_path: Option<String>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<(), String> {
     let remote = build_split_pane(
         tmux_binary.as_deref(),
@@ -435,6 +442,7 @@ async fn tmux_split_remote_pane(
         proxy_jump.as_deref(),
         identity_agent.as_deref(),
         remote,
+        skip_host_key_check.unwrap_or(false),
     ))
     .await
 }
@@ -451,6 +459,7 @@ async fn tmux_kill_remote_pane(
     target: String,
     tmux_binary: Option<String>,
     socket_path: Option<String>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<(), String> {
     let remote = build_kill_pane(tmux_binary.as_deref(), socket_path.as_deref(), &target);
     run_remote_tmux_command(build_remote_tmux_op(
@@ -462,6 +471,7 @@ async fn tmux_kill_remote_pane(
         proxy_jump.as_deref(),
         identity_agent.as_deref(),
         remote,
+        skip_host_key_check.unwrap_or(false),
     ))
     .await
 }
@@ -478,6 +488,7 @@ async fn tmux_zoom_remote_pane(
     target: String,
     tmux_binary: Option<String>,
     socket_path: Option<String>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<(), String> {
     let remote = build_zoom_pane(tmux_binary.as_deref(), socket_path.as_deref(), &target);
     run_remote_tmux_command(build_remote_tmux_op(
@@ -489,6 +500,7 @@ async fn tmux_zoom_remote_pane(
         proxy_jump.as_deref(),
         identity_agent.as_deref(),
         remote,
+        skip_host_key_check.unwrap_or(false),
     ))
     .await
 }
@@ -505,6 +517,7 @@ async fn tmux_select_remote_pane(
     target: String,
     tmux_binary: Option<String>,
     socket_path: Option<String>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<(), String> {
     let remote = build_select_pane(tmux_binary.as_deref(), socket_path.as_deref(), &target);
     run_remote_tmux_command(build_remote_tmux_op(
@@ -516,6 +529,7 @@ async fn tmux_select_remote_pane(
         proxy_jump.as_deref(),
         identity_agent.as_deref(),
         remote,
+        skip_host_key_check.unwrap_or(false),
     ))
     .await
 }
@@ -533,6 +547,7 @@ async fn tmux_select_remote_layout(
     preset: String,
     tmux_binary: Option<String>,
     socket_path: Option<String>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<(), String> {
     let remote = build_select_layout(
         tmux_binary.as_deref(),
@@ -549,6 +564,7 @@ async fn tmux_select_remote_layout(
         proxy_jump.as_deref(),
         identity_agent.as_deref(),
         remote,
+        skip_host_key_check.unwrap_or(false),
     ))
     .await
 }
@@ -566,6 +582,7 @@ async fn tmux_rename_remote_window(
     name: String,
     tmux_binary: Option<String>,
     socket_path: Option<String>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<(), String> {
     let remote = build_rename_window(
         tmux_binary.as_deref(),
@@ -582,6 +599,7 @@ async fn tmux_rename_remote_window(
         proxy_jump.as_deref(),
         identity_agent.as_deref(),
         remote,
+        skip_host_key_check.unwrap_or(false),
     ))
     .await
 }
@@ -599,6 +617,7 @@ async fn tmux_rename_remote_pane(
     title: String,
     tmux_binary: Option<String>,
     socket_path: Option<String>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<(), String> {
     let remote = build_rename_pane(
         tmux_binary.as_deref(),
@@ -615,6 +634,7 @@ async fn tmux_rename_remote_pane(
         proxy_jump.as_deref(),
         identity_agent.as_deref(),
         remote,
+        skip_host_key_check.unwrap_or(false),
     );
     match run_remote_tmux_command(op).await {
         Ok(()) => Ok(()),
@@ -638,6 +658,7 @@ async fn tmux_set_remote_mouse(
     enabled: bool,
     tmux_binary: Option<String>,
     socket_path: Option<String>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<(), String> {
     let remote = build_set_mouse(
         tmux_binary.as_deref(),
@@ -654,6 +675,7 @@ async fn tmux_set_remote_mouse(
         proxy_jump.as_deref(),
         identity_agent.as_deref(),
         remote,
+        skip_host_key_check.unwrap_or(false),
     );
     match run_remote_tmux_command(op).await {
         Ok(()) => Ok(()),
@@ -675,6 +697,7 @@ async fn tmux_set_remote_mouse(
                     proxy_jump.as_deref(),
                     identity_agent.as_deref(),
                     cmd,
+                    skip_host_key_check.unwrap_or(false),
                 );
                 let _ = run_remote_tmux_command(op_legacy).await;
             }
@@ -696,6 +719,7 @@ async fn tmux_new_remote_window(
     target: String,
     tmux_binary: Option<String>,
     socket_path: Option<String>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<(), String> {
     let remote = build_new_window(tmux_binary.as_deref(), socket_path.as_deref(), &target);
     run_remote_tmux_command(build_remote_tmux_op(
@@ -707,6 +731,7 @@ async fn tmux_new_remote_window(
         proxy_jump.as_deref(),
         identity_agent.as_deref(),
         remote,
+        skip_host_key_check.unwrap_or(false),
     ))
     .await
 }
@@ -723,6 +748,7 @@ async fn tmux_kill_remote_window(
     target: String,
     tmux_binary: Option<String>,
     socket_path: Option<String>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<(), String> {
     let remote = build_kill_window(tmux_binary.as_deref(), socket_path.as_deref(), &target);
     run_remote_tmux_command(build_remote_tmux_op(
@@ -734,6 +760,7 @@ async fn tmux_kill_remote_window(
         proxy_jump.as_deref(),
         identity_agent.as_deref(),
         remote,
+        skip_host_key_check.unwrap_or(false),
     ))
     .await
 }
@@ -757,6 +784,7 @@ async fn probe_remote_env(
     key_path: Option<String>,
     proxy_jump: Option<String>,
     identity_agent: Option<String>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<RemoteEnvProbe, String> {
     let argv = build_ssh_probe_argv(
         &SshLaunchArgs {
@@ -769,6 +797,7 @@ async fn probe_remote_env(
             identity_agent: opt_non_empty(identity_agent.as_deref()),
             tmux_session: None,
             tmux_window: None,
+            skip_host_key_check: skip_host_key_check.unwrap_or(false),
         },
         &["sh".to_string(), "-lc".to_string(), "printf 'LANG=%s\\nLC_CTYPE=%s\\n' \"$LANG\" \"$LC_CTYPE\"; command -v tmux >/dev/null 2>&1 && tmux -V || echo 'TMUX_MISSING'".into()],
         true,
@@ -881,6 +910,7 @@ async fn test_connection(
     key_path: Option<String>,
     proxy_jump: Option<String>,
     identity_agent: Option<String>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<TestConnectionResult, String> {
     let argv = build_ssh_probe_argv(
         &SshLaunchArgs {
@@ -893,6 +923,7 @@ async fn test_connection(
             identity_agent: opt_non_empty(identity_agent.as_deref()),
             tmux_session: None,
             tmux_window: None,
+            skip_host_key_check: skip_host_key_check.unwrap_or(false),
         },
         &["true".to_string()],
         true,
@@ -950,6 +981,7 @@ async fn tmux_probe_hierarchy(
     identity_agent: Option<String>,
     tmux_binary: Option<String>,
     socket_path: Option<String>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<Vec<TmuxSessionNode>, String> {
     let panes = if let Some(h) = host {
         tmux_list_remote_panes(
@@ -962,6 +994,7 @@ async fn tmux_probe_hierarchy(
             identity_agent,
             tmux_binary,
             socket_path,
+            skip_host_key_check,
         )
         .await?
     } else {
@@ -980,6 +1013,7 @@ async fn get_process_memory(
     key_path: Option<String>,
     proxy_jump: Option<String>,
     identity_agent: Option<String>,
+    skip_host_key_check: Option<bool>,
 ) -> Result<u64, String> {
     let cmd = format!("ps -o rss= -p {pid}");
     let output = if let Some(ref h) = host {
@@ -994,6 +1028,7 @@ async fn get_process_memory(
                 identity_agent: opt_non_empty(identity_agent.as_deref()),
                 tmux_session: None,
                 tmux_window: None,
+                skip_host_key_check: skip_host_key_check.unwrap_or(false),
             },
             &["sh".to_string(), "-c".to_string(), cmd],
             true,

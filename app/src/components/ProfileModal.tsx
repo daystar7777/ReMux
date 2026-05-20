@@ -69,6 +69,7 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
             keyPath: host.key_path || undefined,
             proxyJump: host.proxy_jump || undefined,
             identityAgent: host.identity_agent || undefined,
+            skipHostKeyCheck: host.skip_host_key_check,
           });
           if (!env.tmuxPresent) {
             setIsTmuxMissing(true);
@@ -89,6 +90,7 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
           identityAgent: host.identity_agent || undefined,
           tmuxBinary: host.custom_tmux_binary || undefined,
           socketPath: host.tmux_socket_path || undefined,
+          skipHostKeyCheck: host.skip_host_key_check,
         });
         setSessions(data);
       }

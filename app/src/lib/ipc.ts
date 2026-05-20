@@ -42,6 +42,7 @@ export interface SpawnSshArgs {
   cols: number;
   rows: number;
   channel: Channel<PtyEvent>;
+  skipHostKeyCheck?: boolean;
 }
 
 export async function ptySpawnLocal(args: SpawnLocalArgs): Promise<string> {
@@ -112,6 +113,7 @@ export async function tmuxListRemotePanes(args: {
   identityAgent?: string;
   tmuxBinary?: string;
   socketPath?: string;
+  skipHostKeyCheck?: boolean;
 }): Promise<TmuxPaneIdentity[]> {
   return invoke<TmuxPaneIdentity[]>("tmux_list_remote_panes", args);
 }
@@ -135,6 +137,7 @@ export interface RemoteTmuxTargetArgs {
   target: string;
   tmuxBinary?: string;
   socketPath?: string;
+  skipHostKeyCheck?: boolean;
 }
 
 export async function tmuxSplitLocalPane(args: LocalTmuxTargetArgs & { direction: "row" | "column" | "down" | "right" }): Promise<void> {
@@ -250,6 +253,7 @@ export async function tmuxProbeHierarchy(args: {
   identityAgent?: string;
   tmuxBinary?: string;
   socketPath?: string;
+  skipHostKeyCheck?: boolean;
 } = {}): Promise<TmuxSessionNode[]> {
   return invoke<TmuxSessionNode[]>("tmux_probe_hierarchy", args);
 }
@@ -263,6 +267,7 @@ export async function getProcessMemory(args: {
   keyPath?: string;
   proxyJump?: string;
   identityAgent?: string;
+  skipHostKeyCheck?: boolean;
 }): Promise<number> {
   return invoke<number>("get_process_memory", args);
 }
@@ -284,6 +289,7 @@ export async function probeRemoteEnv(args: {
   keyPath?: string;
   proxyJump?: string;
   identityAgent?: string;
+  skipHostKeyCheck?: boolean;
 }): Promise<RemoteEnvProbe> {
   return invoke<RemoteEnvProbe>("probe_remote_env", args);
 }
@@ -338,6 +344,7 @@ export async function testConnection(args: {
   keyPath?: string;
   proxyJump?: string;
   identityAgent?: string;
+  skipHostKeyCheck?: boolean;
 }): Promise<TestConnectionResult> {
   return invoke<TestConnectionResult>("test_connection", args);
 }

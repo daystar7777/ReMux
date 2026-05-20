@@ -10,6 +10,7 @@ pub struct SshLaunchArgs<'a> {
     pub identity_agent: Option<&'a str>,
     pub tmux_session: Option<&'a str>,
     pub tmux_window: Option<&'a str>,
+    pub skip_host_key_check: bool,
 }
 
 pub fn build_ssh_argv(args: &SshLaunchArgs<'_>) -> Vec<String> {
@@ -86,6 +87,12 @@ fn build_ssh_base_options(
         argv.push("-o".into());
         argv.push("ConnectTimeout=5".into());
     }
+    if args.skip_host_key_check {
+        argv.push("-o".into());
+        argv.push("StrictHostKeyChecking=no".into());
+        argv.push("-o".into());
+        argv.push("UserKnownHostsFile=/dev/null".into());
+    }
     if let Some(port) = args.port {
         if port != 22 {
             argv.push("-p".into());
@@ -150,6 +157,7 @@ mod tests {
             identity_agent: None,
             tmux_session: Some("logs"),
             tmux_window: None,
+            skip_host_key_check: false,
         });
         assert_eq!(argv[0], "ssh");
         assert_eq!(argv[1], "-t");
@@ -173,6 +181,7 @@ mod tests {
             identity_agent: None,
             tmux_session: None,
             tmux_window: None,
+            skip_host_key_check: false,
         });
         assert_eq!(
             argv,
@@ -202,6 +211,7 @@ mod tests {
             identity_agent: None,
             tmux_session: Some("api"),
             tmux_window: Some("logs"),
+            skip_host_key_check: false,
         });
         assert_eq!(
             &argv[0..10],
@@ -231,10 +241,11 @@ mod tests {
                 port: Some(2222),
                 ssh_config_alias: None,
                 key_path: Some("/Users/me/.ssh/prod ed25519"),
-            proxy_jump: None,
-            identity_agent: None,
+                proxy_jump: None,
+                identity_agent: None,
                 tmux_session: None,
                 tmux_window: None,
+                skip_host_key_check: false,
             },
             &vec!["tmux".into(), "list-panes".into(), "-a".into()],
             true,
@@ -260,10 +271,11 @@ mod tests {
                 port: Some(2222),
                 ssh_config_alias: None,
                 key_path: None,
-            proxy_jump: None,
-            identity_agent: None,
+                proxy_jump: None,
+                identity_agent: None,
                 tmux_session: None,
                 tmux_window: None,
+                skip_host_key_check: false,
             },
             &vec!["true".into()],
             true,
@@ -297,6 +309,7 @@ mod tests {
                 identity_agent: Some("/tmp/agent.sock"),
                 tmux_session: None,
                 tmux_window: None,
+                skip_host_key_check: false,
             },
             &vec!["true".into()],
             true,

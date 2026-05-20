@@ -28,6 +28,7 @@ import {
   cycleTabAction,
   diagnosticsAtom,
   hostsAtom,
+  updateHostAction,
   hydrateConfigAction,
   inputBroadcastAtom,
   localeWarningAtom,
@@ -130,6 +131,7 @@ const remoteSshArgs = (host: Host) => ({
   keyPath: host.key_path,
   proxyJump: host.proxy_jump,
   identityAgent: host.identity_agent,
+  skipHostKeyCheck: host.skip_host_key_check,
 });
 
 export default function App() {
@@ -143,6 +145,7 @@ export default function App() {
   const hosts = useAtomValue(hostsAtom);
   const profiles = useAtomValue(profilesAtom);
   const updateTab = useSetAtom(updateTabAction);
+  const updateHost = useSetAtom(updateHostAction);
   const closeTab = useSetAtom(closeTabAction);
   const [viewMode, setViewMode] = useAtom(viewModeAtom);
   const setLocaleWarning = useSetAtom(localeWarningAtom);
@@ -1839,8 +1842,54 @@ export default function App() {
           {activeTab?.bannerMessage && (
             <div
               className={`banner${activeTab.state === "error" ? " danger" : ""}`}
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
             >
-              {activeTab.bannerMessage}
+              <span style={{ flex: 1, paddingRight: "12px" }}>
+                {activeTab.bannerMessage}
+              </span>
+              {activeTab.state === "error" &&
+                activeHost &&
+                activeHost.auth_method !== "local" &&
+                !activeHost.skip_host_key_check &&
+                activeTab.bannerMessage.includes("code 255") && (
+                  <button
+                    className="icon-btn"
+                    style={{
+                      width: "auto",
+                      height: "auto",
+                      padding: "6px 12px",
+                      fontSize: "11px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      border: "1px solid var(--accent-dim)",
+                      background: "rgba(106, 169, 255, 0.1)",
+                      color: "var(--accent)",
+                      flexShrink: 0,
+                    }}
+                    onClick={async () => {
+                      const updatedHost = {
+                        ...activeHost,
+                        skip_host_key_check: true,
+                      };
+                      await updateHost(updatedHost);
+                      
+                      const paneId = activeTab.activePaneId;
+                      if (paneId) {
+                        updateTab({
+                          id: activeTab.id,
+                          patch: {
+                            state: "connecting",
+                            bannerMessage: "Retrying connection with trusted host...",
+                          },
+                        });
+                        void launchSession(activeTab.id, paneId, "tmux");
+                      }
+                    }}
+                  >
+                    Trust Host &amp; Retry
+                  </button>
+                )}
             </div>
           )}
           {activeTab?.missingTmuxRemote && (

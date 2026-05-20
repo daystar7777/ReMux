@@ -43,6 +43,7 @@ export function HostModal({ host, onClose, onSave }: HostModalProps) {
   const [description, setDescription] = useState("");
   const [proxyJump, setProxyJump] = useState("");
   const [identityAgent, setIdentityAgent] = useState("");
+  const [skipHostKeyCheck, setSkipHostKeyCheck] = useState(false);
 
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
@@ -76,6 +77,7 @@ export function HostModal({ host, onClose, onSave }: HostModalProps) {
       setDescription(host.description || "");
       setProxyJump(host.proxy_jump || "");
       setIdentityAgent(host.identity_agent || "");
+      setSkipHostKeyCheck(host.skip_host_key_check ?? false);
 
       void (async () => {
         try {
@@ -142,6 +144,7 @@ export function HostModal({ host, onClose, onSave }: HostModalProps) {
         keyPath: keyPath.trim() || undefined,
         proxyJump: proxyJump.trim() || undefined,
         identityAgent: identityAgent.trim() || undefined,
+        skipHostKeyCheck,
       });
       setTestResult(result);
     } catch (err: unknown) {
@@ -181,6 +184,7 @@ export function HostModal({ host, onClose, onSave }: HostModalProps) {
       description: description.trim() || undefined,
       proxy_jump: proxyJump.trim() || undefined,
       identity_agent: identityAgent.trim() || undefined,
+      skip_host_key_check: skipHostKeyCheck,
     };
   };
 
@@ -504,6 +508,16 @@ export function HostModal({ host, onClose, onSave }: HostModalProps) {
                     />
                     Detach other tmux clients on attach
                   </label>
+                  {isRemote && (
+                    <label className="form-checkbox-label" style={{ marginBottom: 6 }}>
+                      <input
+                        type="checkbox"
+                        checked={skipHostKeyCheck}
+                        onChange={(e) => setSkipHostKeyCheck(e.target.checked)}
+                      />
+                      Skip host key verification (StrictHostKeyChecking=no)
+                    </label>
+                  )}
                 </div>
               </div>
 

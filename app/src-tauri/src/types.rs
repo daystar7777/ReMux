@@ -44,6 +44,8 @@ pub struct Host {
     #[serde(default)]
     pub clipboard_policy: Option<ClipboardPolicy>,
     #[serde(default)]
+    pub skip_host_key_check: Option<bool>,
+    #[serde(default)]
     pub description: Option<String>,
 }
 

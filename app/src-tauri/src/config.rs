@@ -140,6 +140,7 @@ mod tests {
             tmux_socket_path: None,
             detach_other_clients: false,
             clipboard_policy: Some(ClipboardPolicy::Allow),
+            skip_host_key_check: None,
             description: None,
         }
     }
