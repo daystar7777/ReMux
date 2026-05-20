@@ -519,10 +519,13 @@ export default function App() {
       }
     }
 
-    updateTab({
-      id: tabId,
-      patch: { state: "connecting", bannerMessage: undefined },
-    });
+    const isLocalConnection = activeHost.auth_method === "local" || mode === "raw" || mode === "install-local";
+    if (!isLocalConnection) {
+      updateTab({
+        id: tabId,
+        patch: { state: "connecting", bannerMessage: undefined },
+      });
+    }
 
     let activeSessionId: string | null = null;
     const channel = new Channel<PtyEvent>();
