@@ -591,6 +591,17 @@ export default function App() {
 
         if (binding?.kind === "tmux") {
           if (evt.code !== 0 && activeHost && activeHost.auth_method !== "local") {
+            if (evt.code === 255) {
+              updateTab({
+                id: tabId,
+                patch: {
+                  state: "error",
+                  bannerMessage: `SSH connection failed (code 255). Please check your SSH credentials, ssh-agent status, or key permissions.`,
+                },
+              });
+              return;
+            }
+
             setDisconnectedPanes((prev) => {
               const next = new Map(prev);
               next.set(paneId, {
@@ -736,6 +747,21 @@ export default function App() {
       });
     } else {
       const nextRetryCount = currentRetryCount + 1;
+      if (nextRetryCount > 3) {
+        setDisconnectedPanes((prev) => {
+          const next = new Map(prev);
+          next.delete(paneId);
+          return next;
+        });
+        updateTab({
+          id: targetTabId,
+          patch: {
+            state: "error",
+            bannerMessage: "Failed to recover tmux session after 3 attempts. Please check host connection manually.",
+          },
+        });
+        return;
+      }
       const nextCountdown = Math.min(5 * Math.pow(2, nextRetryCount), 60);
       setDisconnectedPanes((prev) => {
         const next = new Map(prev);
