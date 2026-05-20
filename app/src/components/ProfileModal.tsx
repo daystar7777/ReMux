@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { X } from "lucide-react";
 import type { Host, Profile } from "../types/config";
 import { newProfileId, validateProfile } from "../types/config";
+import { tmuxProbeHierarchy, probeRemoteEnv, tmuxLocalVersion, type TmuxSessionNode } from "../lib/ipc";
 
 interface ProfileModalProps {
   profile?: Profile; // If provided, edit mode
@@ -17,6 +18,15 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
   const [tmuxWindowTarget, setTmuxWindowTarget] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // Tmux probing states
+  const [probing, setProbing] = useState(false);
+  const [sessions, setSessions] = useState<TmuxSessionNode[]>([]);
+  const [isTmuxMissing, setIsTmuxMissing] = useState(false);
+  const [probeError, setProbeError] = useState<string | null>(null);
+
+  const [useCustomSession, setUseCustomSession] = useState(true);
+  const [useCustomWindow, setUseCustomWindow] = useState(true);
+
   useEffect(() => {
     if (profile) {
       setDisplayAlias(profile.display_alias || "");
@@ -28,6 +38,119 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
       setHostId(hosts[0].id);
     }
   }, [profile, hosts]);
+
+  const probeHost = async (host: Host) => {
+    setProbing(true);
+    setProbeError(null);
+    setIsTmuxMissing(false);
+    setSessions([]);
+
+    try {
+      if (host.auth_method === "local") {
+        const localVersion = await tmuxLocalVersion(host.custom_tmux_binary || undefined);
+        if (!localVersion) {
+          setIsTmuxMissing(true);
+          setProbing(false);
+          return;
+        }
+        const data = await tmuxProbeHierarchy({
+          tmuxBinary: host.custom_tmux_binary || undefined,
+          socketPath: host.tmux_socket_path || undefined,
+        });
+        setSessions(data);
+      } else {
+        // Remote host
+        try {
+          const env = await probeRemoteEnv({
+            host: host.address,
+            user: host.username || undefined,
+            port: host.port || undefined,
+            sshConfigAlias: host.ssh_config_alias || undefined,
+            keyPath: host.key_path || undefined,
+            proxyJump: host.proxy_jump || undefined,
+            identityAgent: host.identity_agent || undefined,
+          });
+          if (!env.tmuxPresent) {
+            setIsTmuxMissing(true);
+            setProbing(false);
+            return;
+          }
+        } catch (e) {
+          console.warn("probeRemoteEnv failed", e);
+        }
+
+        const data = await tmuxProbeHierarchy({
+          host: host.address,
+          user: host.username || undefined,
+          port: host.port || undefined,
+          sshConfigAlias: host.ssh_config_alias || undefined,
+          keyPath: host.key_path || undefined,
+          proxyJump: host.proxy_jump || undefined,
+          identityAgent: host.identity_agent || undefined,
+          tmuxBinary: host.custom_tmux_binary || undefined,
+          socketPath: host.tmux_socket_path || undefined,
+        });
+        setSessions(data);
+      }
+    } catch (err: any) {
+      console.error("Probing failed", err);
+      const errMsg = err?.toString() || "Unknown error";
+      if (errMsg.toLowerCase().includes("not found") || errMsg.toLowerCase().includes("tmux_missing")) {
+        setIsTmuxMissing(true);
+      } else {
+        setProbeError(errMsg);
+      }
+    } finally {
+      setProbing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!hostId) return;
+    const selectedHost = hosts.find((h) => h.id === hostId);
+    if (selectedHost) {
+      probeHost(selectedHost);
+    }
+  }, [hostId, hosts]);
+
+  useEffect(() => {
+    if (sessions.length > 0) {
+      if (profile && profile.tmux_session_name) {
+        const foundSession = sessions.find((s) => s.sessionName === profile.tmux_session_name);
+        if (foundSession) {
+          setUseCustomSession(false);
+          setTmuxSessionName(profile.tmux_session_name);
+
+          if (profile.tmux_window_target) {
+            const foundWindow = foundSession.windows.find((w) => w.windowName === profile.tmux_window_target);
+            if (foundWindow) {
+              setUseCustomWindow(false);
+              setTmuxWindowTarget(profile.tmux_window_target);
+            } else {
+              setUseCustomWindow(true);
+              setTmuxWindowTarget(profile.tmux_window_target);
+            }
+          } else {
+            setUseCustomWindow(false);
+            setTmuxWindowTarget("");
+          }
+        } else {
+          setUseCustomSession(true);
+          setTmuxSessionName(profile.tmux_session_name);
+          setUseCustomWindow(true);
+          setTmuxWindowTarget(profile.tmux_window_target || "");
+        }
+      } else {
+        setUseCustomSession(false);
+        setTmuxSessionName(sessions[0].sessionName);
+        setUseCustomWindow(false);
+        setTmuxWindowTarget("");
+      }
+    } else {
+      setUseCustomSession(true);
+      setUseCustomWindow(true);
+    }
+  }, [sessions, profile]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,9 +178,12 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
     onSave(savedProfile);
   };
 
+  const selectedHost = hosts.find((h) => h.id === hostId);
+  const selectedSessionObj = sessions.find((s) => s.sessionName === tmuxSessionName);
+
   return (
     <div className="modal-backdrop">
-      <div className="modal" style={{ width: "420px", maxWidth: "90vw" }}>
+      <div className="modal" style={{ width: "450px", maxWidth: "95vw" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <h3 style={{ margin: 0 }}>{profile ? "Edit Profile" : "New Profile"}</h3>
           <button className="icon-btn" onClick={onClose} aria-label="Close modal">
@@ -85,7 +211,29 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
           </div>
 
           <div className="form-group">
-            <label className="form-label">Target Host *</label>
+            <label className="form-label" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>Target Host *</span>
+              {selectedHost && (
+                <button
+                  type="button"
+                  onClick={() => probeHost(selectedHost)}
+                  disabled={probing}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "var(--accent)",
+                    fontSize: "11px",
+                    cursor: "pointer",
+                    padding: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                  }}
+                >
+                  <span>{probing ? "Probing..." : "🔄 Refresh Sessions"}</span>
+                </button>
+              )}
+            </label>
             <select
               className="form-select"
               value={hostId}
@@ -101,7 +249,84 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
             </select>
           </div>
 
-          <div className="form-row">
+          {/* Probing Banners */}
+          {probing && (
+            <div className="banner" style={{ margin: "2px 0 6px 0", background: "rgba(106, 169, 255, 0.08)", borderColor: "rgba(106, 169, 255, 0.25)", color: "var(--accent)" }}>
+              <span>🔍 Probing host for active tmux sessions...</span>
+            </div>
+          )}
+
+          {isTmuxMissing && (
+            <div className="banner danger" style={{ margin: "2px 0 6px 0" }}>
+              <span>⚠️ Tmux is not installed on this host! Please install tmux on the host server before connecting.</span>
+            </div>
+          )}
+
+          {probeError && !isTmuxMissing && (
+            <div className="banner" style={{ margin: "2px 0 6px 0", background: "rgba(245, 176, 74, 0.08)", borderColor: "rgba(245, 176, 74, 0.25)", color: "var(--warn)" }}>
+              <span>ℹ️ Could not probe active sessions: {probeError}. (You can still type details manually)</span>
+            </div>
+          )}
+
+          {!probing && !isTmuxMissing && !probeError && hostId && sessions.length === 0 && (
+            <div className="banner" style={{ margin: "2px 0 6px 0", background: "rgba(106, 169, 255, 0.05)", borderColor: "rgba(106, 169, 255, 0.15)", color: "var(--fg-1)" }}>
+              <span>ℹ️ No active tmux sessions found. Enter session details below to spawn a new session.</span>
+            </div>
+          )}
+
+          {/* Tmux Session Name Selector */}
+          {sessions.length > 0 ? (
+            <div className="form-group">
+              <label className="form-label">Tmux Session Name *</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                <select
+                  className="form-select"
+                  value={useCustomSession ? "__custom__" : tmuxSessionName}
+                  onChange={(e) => {
+                    if (e.target.value === "__custom__") {
+                      setUseCustomSession(true);
+                      setTmuxSessionName("");
+                      setUseCustomWindow(true);
+                      setTmuxWindowTarget("");
+                    } else {
+                      setUseCustomSession(false);
+                      setTmuxSessionName(e.target.value);
+                      
+                      const sessObj = sessions.find((s) => s.sessionName === e.target.value);
+                      if (sessObj && sessObj.windows.length > 0) {
+                        setUseCustomWindow(false);
+                        setTmuxWindowTarget("");
+                      } else {
+                        setUseCustomWindow(true);
+                        setTmuxWindowTarget("");
+                      }
+                    }
+                  }}
+                  style={{ flex: 1 }}
+                >
+                  <option value="" disabled>Select active session...</option>
+                  {sessions.map((s) => (
+                    <option key={s.sessionId} value={s.sessionName}>
+                      {s.sessionName} ({s.windows.length} windows)
+                    </option>
+                  ))}
+                  <option value="__custom__">+ Create a new session...</option>
+                </select>
+
+                {useCustomSession && (
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="New session name..."
+                    value={tmuxSessionName}
+                    onChange={(e) => setTmuxSessionName(e.target.value)}
+                    required
+                    style={{ flex: 1 }}
+                  />
+                )}
+              </div>
+            </div>
+          ) : (
             <div className="form-group">
               <label className="form-label">Tmux Session Name *</label>
               <input
@@ -113,7 +338,49 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
                 required
               />
             </div>
+          )}
 
+          {/* Initial Window Target Selector */}
+          {!useCustomSession && selectedSessionObj ? (
+            <div className="form-group">
+              <label className="form-label">Initial Window (Optional)</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                <select
+                  className="form-select"
+                  value={useCustomWindow ? "__custom__" : tmuxWindowTarget}
+                  onChange={(e) => {
+                    if (e.target.value === "__custom__") {
+                      setUseCustomWindow(true);
+                      setTmuxWindowTarget("");
+                    } else {
+                      setUseCustomWindow(false);
+                      setTmuxWindowTarget(e.target.value);
+                    }
+                  }}
+                  style={{ flex: 1 }}
+                >
+                  <option value="">[First Window / Default]</option>
+                  {selectedSessionObj.windows.map((w) => (
+                    <option key={w.windowId} value={w.windowIndex.toString()}>
+                      {w.windowIndex}: {w.windowName}
+                    </option>
+                  ))}
+                  <option value="__custom__">+ Custom window target...</option>
+                </select>
+
+                {useCustomWindow && (
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="Custom window target..."
+                    value={tmuxWindowTarget}
+                    onChange={(e) => setTmuxWindowTarget(e.target.value)}
+                    style={{ flex: 1 }}
+                  />
+                )}
+              </div>
+            </div>
+          ) : (
             <div className="form-group">
               <label className="form-label">Initial Window (Optional)</label>
               <input
@@ -124,7 +391,7 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
                 onChange={(e) => setTmuxWindowTarget(e.target.value)}
               />
             </div>
-          </div>
+          )}
 
           <div className="actions" style={{ marginTop: 12 }}>
             <button type="button" onClick={onClose}>
