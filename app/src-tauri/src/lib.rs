@@ -94,6 +94,7 @@ async fn pty_spawn_ssh_tmux(
     rows: u16,
     channel: Channel<PtyEvent>,
     skip_host_key_check: Option<bool>,
+    password_auth: Option<bool>,
 ) -> Result<String, String> {
     let argv = build_ssh_argv(&SshLaunchArgs {
         user: opt_non_empty(user.as_deref()),
@@ -106,6 +107,7 @@ async fn pty_spawn_ssh_tmux(
         tmux_session: opt_non_empty(tmux_session.as_deref()),
         tmux_window: opt_non_empty(tmux_window.as_deref()),
         skip_host_key_check: skip_host_key_check.unwrap_or(false),
+        password_auth: password_auth.unwrap_or(false),
     });
     let opts = SpawnOptions {
         auto_password: password,
@@ -192,6 +194,7 @@ async fn tmux_list_remote_panes(
             tmux_session: None,
             tmux_window: None,
             skip_host_key_check: skip_host_key_check.unwrap_or(false),
+            password_auth: false,
         },
         &remote,
         true,
@@ -406,6 +409,7 @@ fn build_remote_tmux_op(
             tmux_session: None,
             tmux_window: None,
             skip_host_key_check,
+            password_auth: false,
         },
         &remote,
         true,
@@ -798,6 +802,7 @@ async fn probe_remote_env(
             tmux_session: None,
             tmux_window: None,
             skip_host_key_check: skip_host_key_check.unwrap_or(false),
+            password_auth: false,
         },
         &["sh".to_string(), "-lc".to_string(), "printf 'LANG=%s\\nLC_CTYPE=%s\\n' \"$LANG\" \"$LC_CTYPE\"; command -v tmux >/dev/null 2>&1 && tmux -V || echo 'TMUX_MISSING'".into()],
         true,
@@ -924,6 +929,7 @@ async fn test_connection(
             tmux_session: None,
             tmux_window: None,
             skip_host_key_check: skip_host_key_check.unwrap_or(false),
+            password_auth: false,
         },
         &["true".to_string()],
         true,
@@ -1029,6 +1035,7 @@ async fn get_process_memory(
                 tmux_session: None,
                 tmux_window: None,
                 skip_host_key_check: skip_host_key_check.unwrap_or(false),
+                password_auth: false,
             },
             &["sh".to_string(), "-c".to_string(), cmd],
             true,

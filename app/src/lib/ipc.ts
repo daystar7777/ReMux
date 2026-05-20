@@ -39,6 +39,7 @@ export interface SpawnSshArgs {
   tmuxSession?: string;
   tmuxWindow?: string;
   password?: string;
+  passwordAuth?: boolean;
   cols: number;
   rows: number;
   channel: Channel<PtyEvent>;

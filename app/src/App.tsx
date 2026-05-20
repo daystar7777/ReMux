@@ -132,6 +132,7 @@ const remoteSshArgs = (host: Host) => ({
   proxyJump: host.proxy_jump,
   identityAgent: host.identity_agent,
   skipHostKeyCheck: host.skip_host_key_check,
+  passwordAuth: host.auth_method === "password",
 });
 
 export default function App() {

@@ -11,6 +11,7 @@ pub struct SshLaunchArgs<'a> {
     pub tmux_session: Option<&'a str>,
     pub tmux_window: Option<&'a str>,
     pub skip_host_key_check: bool,
+    pub password_auth: bool,
 }
 
 pub fn build_ssh_argv(args: &SshLaunchArgs<'_>) -> Vec<String> {
@@ -93,6 +94,10 @@ fn build_ssh_base_options(
         argv.push("-o".into());
         argv.push("UserKnownHostsFile=/dev/null".into());
     }
+    if args.password_auth {
+        argv.push("-o".into());
+        argv.push("PreferredAuthentications=password".into());
+    }
     if let Some(port) = args.port {
         if port != 22 {
             argv.push("-p".into());
@@ -158,6 +163,7 @@ mod tests {
             tmux_session: Some("logs"),
             tmux_window: None,
             skip_host_key_check: false,
+            password_auth: false,
         });
         assert_eq!(argv[0], "ssh");
         assert_eq!(argv[1], "-t");
@@ -182,6 +188,7 @@ mod tests {
             tmux_session: None,
             tmux_window: None,
             skip_host_key_check: false,
+            password_auth: false,
         });
         assert_eq!(
             argv,
@@ -212,6 +219,7 @@ mod tests {
             tmux_session: Some("api"),
             tmux_window: Some("logs"),
             skip_host_key_check: false,
+            password_auth: false,
         });
         assert_eq!(
             &argv[0..10],
@@ -246,6 +254,7 @@ mod tests {
                 tmux_session: None,
                 tmux_window: None,
                 skip_host_key_check: false,
+                password_auth: false,
             },
             &vec!["tmux".into(), "list-panes".into(), "-a".into()],
             true,
@@ -276,6 +285,7 @@ mod tests {
                 tmux_session: None,
                 tmux_window: None,
                 skip_host_key_check: false,
+                password_auth: false,
             },
             &vec!["true".into()],
             true,
@@ -310,6 +320,7 @@ mod tests {
                 tmux_session: None,
                 tmux_window: None,
                 skip_host_key_check: false,
+                password_auth: false,
             },
             &vec!["true".into()],
             true,
@@ -325,5 +336,24 @@ mod tests {
         assert_eq!(argv[proxy_idx + 1], "bastion");
         assert!(proxy_idx < target_idx, "ProxyJump must precede target");
         assert!(agent_idx < target_idx, "IdentityAgent must precede target");
+    }
+
+    #[test]
+    fn password_auth_preferred_authentications() {
+        let argv = build_ssh_argv(&SshLaunchArgs {
+            user: Some("storysq"),
+            host: "10.0.0.5",
+            port: None,
+            ssh_config_alias: None,
+            key_path: None,
+            proxy_jump: None,
+            identity_agent: None,
+            tmux_session: None,
+            tmux_window: None,
+            skip_host_key_check: false,
+            password_auth: true,
+        });
+        assert_eq!(argv[0], "ssh");
+        assert!(argv.windows(2).any(|w| w == ["-o", "PreferredAuthentications=password"]));
     }
 }
