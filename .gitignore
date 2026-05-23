@@ -23,3 +23,7 @@ AIMemory/
 
 # Binary release builds
 REMUX-macOS.zip
+
+# Local developer probes (not part of release gate; may reference .env)
+app/src-tauri/src/test_path.py
+app/src-tauri/src/bin/
