@@ -159,7 +159,6 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
             }
             lastInteractionTimeRef.current = Date.now();
             lastInteractionPaneIdRef.current = node.id;
-            selectPane(node.id);
 
             // Coordinated header-click focus relay
             const target = e.target as HTMLElement;
@@ -170,6 +169,10 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
                                            target.closest("textarea") !== null || 
                                            target.closest(".presets-dropdown") !== null;
             
+            if (!isClickingInteractive) {
+              selectPane(node.id);
+            }
+
             if (!isClickingInsideTerminal && !isClickingInteractive) {
               const handle = termHandlesRef.current.get(node.id);
               if (handle) {
