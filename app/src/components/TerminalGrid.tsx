@@ -3,7 +3,7 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Terminal, type PasteRequest, type TerminalHandle } from "./Terminal";
 import { openTabsAtom, type PaneLayout, splitPaneAction, closePaneAction, viewModeAtom, applyPresetAction } from "../state/atoms";
 import { logDebug, type TmuxLayoutPreset } from "../lib/ipc";
-import { Columns, Pencil, Rows, Tag, X, LayoutGrid } from "lucide-react";
+import { Columns, Pencil, Rows, Tag, X, LayoutGrid, Maximize2, Minimize2 } from "lucide-react";
 import { RecoveryOverlay } from "./RecoveryOverlay";
 import {
   parseTmuxLayout,
@@ -473,6 +473,28 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
                 }}
               >
                 <Rows size={11} />
+              </button>
+              <button
+                className="icon-btn"
+                onClick={() => {
+                  if (onDoubleClick) {
+                    onDoubleClick(node.id);
+                  }
+                }}
+                title={isFocusMode ? "Zoom Out Pane" : "Zoom In Pane (Focus)"}
+                style={{
+                  width: "22px",
+                  height: "22px",
+                  padding: 0,
+                  border: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: isFocusMode ? "var(--accent)" : "inherit",
+                  background: isFocusMode ? "rgba(106, 169, 255, 0.1)" : "transparent",
+                }}
+              >
+                {isFocusMode ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
               </button>
               {canClose && (
                 <button

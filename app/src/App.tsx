@@ -2248,6 +2248,21 @@ export default function App() {
   };
 
   const onTerminalResize = (paneId: string, cols: number, rows: number) => {
+    // 1. Safe boundary: Ignore collapsed/hidden state resizes to prevent remote buffer corruption
+    if (cols <= 5 || rows <= 5) return;
+
+    // 2. Active tab check: Lock inactive background PTY sizes at their last stable values
+    const isActiveTabPane = (() => {
+      if (!activeTab || !activeTab.layout) return false;
+      const checkPane = (node: PaneLayout): boolean => {
+        if (node.type === "leaf") return node.id === paneId;
+        return node.children.some(checkPane);
+      };
+      return checkPane(activeTab.layout);
+    })();
+
+    if (!isActiveTabPane) return;
+
     const binding = bindingsRef.current.get(paneId);
     if (binding?.sessionId) {
       void ptyResize(binding.sessionId, cols, rows);
@@ -2476,7 +2491,7 @@ export default function App() {
                   <TerminalGrid
                     tabId={tab.id}
                     layout={tab.layout}
-                    activePaneId={tab.activePaneId}
+                    activePaneId={isTabActive ? tab.activePaneId : undefined}
                     termHandlesRef={termHandlesRef}
                     onInput={onTerminalInput}
                     onResize={onTerminalResize}
