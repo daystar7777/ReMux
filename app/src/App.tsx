@@ -2270,7 +2270,22 @@ export default function App() {
   };
 
   const onDoubleClick = async (paneId: string) => {
+    // Synchronously select the pane to make sure it is active before zooming!
+    if (activeTab) {
+      updateTab({
+        id: activeTab.id,
+        patch: { activePaneId: paneId },
+      });
+    }
+
     setViewMode((m) => (m === "focus" ? "normal" : "focus"));
+
+    // Force focus the terminal immediately upon zooming to ensure seamless keyboard inputs
+    const handle = termHandlesRef.current.get(paneId);
+    if (handle) {
+      setTimeout(() => handle.focus(), 50);
+    }
+
     const binding = bindingsRef.current.get(paneId);
     if (binding?.kind === "tmux") {
       await executeTmuxCommand("zoom", paneId);

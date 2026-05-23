@@ -539,7 +539,7 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
               const elapsed = now - lastInteractionTimeRef.current;
               const isTargetMatch = lastInteractionPaneIdRef.current === node.id;
               void logDebug(`[ReMux Debug] onFocus on pane ${node.id}. Elapsed: ${elapsed}ms, TargetMatch: ${isTargetMatch}, isActive: ${isActive}`);
-              if ((elapsed < 150 && isTargetMatch) || isActive) {
+              if ((elapsed < 1000 && isTargetMatch) || isActive) {
                 selectPane(node.id);
               } else {
                 void logDebug(`[ReMux Debug] Ignored phantom focus event on pane ${node.id} to prevent physical hijacking. (Elapsed: ${elapsed}ms, TargetMatch: ${isTargetMatch})`);

@@ -321,6 +321,10 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
     const observer = new ResizeObserver(() => {
       if (root.clientWidth > 0 && root.clientHeight > 0) {
         fit.fit();
+        // Force repaint the entire character grid to prevent canvas rendering desync
+        if (typeof term.refresh === "function") {
+          term.refresh(0, term.rows - 1);
+        }
       }
     });
     observer.observe(root);
@@ -341,6 +345,16 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
       webglRef.current = null;
     };
   }, [setClipboard, setComposing]); // eslint-disable-next-line react-hooks/exhaustive-deps
+
+  // Force canvas repaint on active state change to resolve terminal scramble/blanking issues
+  useEffect(() => {
+    if (props.isActive && termRef.current) {
+      const term = termRef.current;
+      if (typeof term.refresh === "function") {
+        term.refresh(0, term.rows - 1);
+      }
+    }
+  }, [props.isActive]);
 
   // Reactive updates on appearance configurations
   useEffect(() => {
