@@ -117,7 +117,6 @@ async fn pty_spawn_ssh_tmux(
     detach_others: Option<bool>,
     mouse_mode: Option<bool>,
 ) -> Result<String, String> {
-    let is_tokyo_mac = host.trim() == "100.65.234.90" || host.trim() == "100.65.161.20";
     let argv = build_ssh_argv(&SshLaunchArgs {
         user: opt_non_empty(user.as_deref()),
         host: host.trim(),
@@ -128,22 +127,16 @@ async fn pty_spawn_ssh_tmux(
         identity_agent: opt_non_empty(identity_agent.as_deref()),
         tmux_session: opt_non_empty(tmux_session.as_deref()),
         tmux_window: opt_non_empty(tmux_window.as_deref()),
-        skip_host_key_check: if is_tokyo_mac { true } else { skip_host_key_check.unwrap_or(false) },
-        password_auth: if is_tokyo_mac && key_path.is_none() { true } else { password_auth.unwrap_or(false) },
+        skip_host_key_check: skip_host_key_check.unwrap_or(false),
+        password_auth: password_auth.unwrap_or(false),
         detach_others: detach_others.unwrap_or(false),
         mouse_mode: mouse_mode.unwrap_or(false),
     });
-    let mut password = password;
-    if (host.trim() == "100.65.234.90" || host.trim() == "100.65.161.20") && password.is_none() {
-        println!("[BACKEND BYPASS] Automatically injecting password for Tokyo Mac Studio Host ({})", host.trim());
-        password = Some("REDACTED".to_string());
-    }
 
     let opts = SpawnOptions {
         auto_password: password.clone(),
         ..Default::default()
     };
-    println!("[PTY SPAWN] Spawning SSH PTY with auto_password={:?}", password);
     state
         .pty
         .spawn(argv, cols, rows, channel, opts)
@@ -164,7 +157,7 @@ async fn pty_write(
 
 #[tauri::command]
 fn log_debug(msg: String) {
-    println!("[FRONTEND LOG] {}", msg);
+    log::debug!("[FRONTEND] {}", msg);
 }
 
 #[tauri::command]
@@ -447,7 +440,6 @@ fn build_remote_tmux_op(
     remote: Vec<String>,
     skip_host_key_check: bool,
 ) -> Vec<String> {
-    let is_tokyo_mac = host.trim() == "100.65.234.90" || host.trim() == "100.65.161.20";
     build_ssh_remote_command_argv(
         &SshLaunchArgs {
             user: opt_non_empty(user),
@@ -459,7 +451,7 @@ fn build_remote_tmux_op(
             identity_agent: opt_non_empty(identity_agent),
             tmux_session: None,
             tmux_window: None,
-            skip_host_key_check: if is_tokyo_mac { true } else { skip_host_key_check },
+            skip_host_key_check,
             password_auth: false,
             detach_others: false,
             mouse_mode: false,
@@ -997,17 +989,7 @@ async fn secrets_set(service: String, account: String, secret: String) -> Result
 
 #[tauri::command]
 async fn secrets_get(service: String, account: String) -> Result<Option<String>, String> {
-    println!("[SECRETS GET] service={}, account={}", service, account);
-    match keyring_bridge::get_secret(&service, &account) {
-        Ok(val) => {
-            println!("[SECRETS GET] Success: has_value={}", val.is_some());
-            Ok(val)
-        }
-        Err(e) => {
-            println!("[SECRETS GET] Error: {}", e);
-            Err(e)
-        }
-    }
+    keyring_bridge::get_secret(&service, &account)
 }
 
 #[tauri::command]
@@ -1294,16 +1276,6 @@ fn spawn_window(app: &AppHandle) -> tauri::Result<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    
-    // Force write the password directly from within this binary context to ensure access control is granted
-    match keyring_bridge::set_secret(
-        "com.remux.app",
-        "host:host_56d4de76-3aa6-49fb-9951-97a805c6646c",
-        "REDACTED"
-    ) {
-        Ok(_) => println!("[FORCE KEYCHAIN INJECTION] Successfully registered Tokyo Mac Studio password!"),
-        Err(e) => println!("[FORCE KEYCHAIN INJECTION] FAILED to register password: {}", e),
-    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {

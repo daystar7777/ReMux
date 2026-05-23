@@ -155,7 +155,6 @@ impl PtyManager {
                     Ok(0) => break,
                     Ok(n) => {
                         let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
-                        println!("[PTY READ] {:?}", chunk);
                         if channel_for_reader
                             .send(PtyEvent::Data { data: chunk.clone() })
                             .is_err()
@@ -193,9 +192,6 @@ impl PtyManager {
                             if let Some(pw) = auto_password.as_deref() {
                                 let used = password_used_for_reader.load(Ordering::Relaxed);
                                 let is_prompt = looks_like_password_prompt(&tail);
-                                if !tail.is_empty() {
-                                    println!("[PTY WATCHER] used={}, is_prompt={}, tail={:?}", used, is_prompt, tail);
-                                }
                                 if !used && is_prompt {
                                     password_used_for_reader.store(true, Ordering::Relaxed);
                                     let pw_clone = pw.to_string();
@@ -204,7 +200,6 @@ impl PtyManager {
                                         // Sleep in a separate thread to avoid blocking the critical PTY Reader loop
                                         thread::sleep(std::time::Duration::from_millis(300));
                                         if let Ok(mut w) = writer_clone.lock() {
-                                            println!("[PTY WATCHER] [BG] Writing password auto-inject!");
                                             let _ = w.write_all(pw_clone.as_bytes());
                                             let _ = w.write_all(b"\n");
                                             let _ = w.flush();
@@ -240,7 +235,6 @@ impl PtyManager {
             s.password_used.store(true, Ordering::Relaxed);
         }
         let mut w = s.writer.lock().unwrap();
-        println!("[PTY WRITE] {:?}", data);
         w.write_all(data.as_bytes()).context("pty write")?;
         w.flush().ok();
         Ok(())
