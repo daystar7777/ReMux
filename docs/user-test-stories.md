@@ -32,11 +32,13 @@ A user enters a tmux session name in the profile form and should receive fronten
 
 Coverage: `app/src/userStories.test.ts`, `app/src/types/config.test.ts`, and Rust config tests now share the same allowed session-name contract: letters, numbers, dots, underscores, and hyphens.
 
-## Story 6: Password Host Boundaries
+## Story 6: Password Host Native Tmux Support
 
-A user can attach to a password-auth host interactively, but native tmux actions are disabled until REMUX has a separate command channel for password sessions.
+A user can attach to a password-auth host interactively, AND native tmux actions (split, layout, rename, kill) work because REMUX auto-provisions a key on first connect to open a command channel.
 
-Coverage: `app/src/userStories.test.ts` and `app/src/lib/remotePolicy.test.ts` verify the command boundary and operator-facing reason.
+Coverage: `app/src/userStories.test.ts` and `app/src/lib/remotePolicy.test.ts` verify that `supportsNativeTmuxCommands` returns true and `nativeTmuxDisabledReason` returns no blocking reason for both local and password hosts.
+
+History: an earlier revision of REMUX gated native tmux commands behind key/agent/alias auth only; the current build relaxes that gate after the key auto-provisioning flow landed.
 
 ## Story 7: Release Gate Confidence
 
