@@ -134,6 +134,8 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
     const isActiveOrDescendant = activePaneId ? hasActivePaneDescendant(node, activePaneId) : false;
     const shouldHide = isFocusMode && !isActiveOrDescendant;
 
+    void logDebug(`[ReMux DBG] renderNode id: ${node.id}, type: ${node.type}, isFocus: ${isFocusMode}, active: ${activePaneId}, isDesc: ${isActiveOrDescendant}, hide: ${shouldHide}`);
+
     if (node.type === "leaf") {
       const isActive = node.id === activePaneId;
       const discState = disconnectedPanes?.get(node.id);
