@@ -111,22 +111,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
     );
     term.open(containerRef.current);
 
-    // Intercept and swallow Primary and Secondary Device Attributes queries
-    // to prevent automated xterm.js responses from being written back to PTY stdin.
-    // Over IPC/latency-prone channels, these responses miss the query's read window
-    // and leak as literal text in the user's terminal input buffer.
-    term.parser.registerCsiHandler({ final: "c" }, (params) => {
-      logDebug("[CSI HANDLER] final: c, params: " + JSON.stringify(params));
-      return true;
-    });
-    term.parser.registerCsiHandler({ final: "c", prefix: ">" }, (params) => {
-      logDebug("[CSI HANDLER] final: c, prefix: >, params: " + JSON.stringify(params));
-      return true;
-    });
-    term.parser.registerCsiHandler({ final: "c", prefix: "?" }, (params) => {
-      logDebug("[CSI HANDLER] final: c, prefix: ?, params: " + JSON.stringify(params));
-      return true;
-    });
+
 
     try {
       const webgl = new WebglAddon();
