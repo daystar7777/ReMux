@@ -318,7 +318,11 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
     root.addEventListener("mouseup", onMouseUp);
     root.addEventListener("mousedown", onMouseDown, true);
 
-    const observer = new ResizeObserver(() => fit.fit());
+    const observer = new ResizeObserver(() => {
+      if (root.clientWidth > 0 && root.clientHeight > 0) {
+        fit.fit();
+      }
+    });
     observer.observe(root);
 
     return () => {
@@ -355,7 +359,9 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
 
     // Give xterm and DOM a tiny tick to settle before measuring dimensions
     const timer = setTimeout(() => {
-      fitRef.current?.fit();
+      if (containerRef.current && containerRef.current.clientWidth > 0 && containerRef.current.clientHeight > 0) {
+        fitRef.current?.fit();
+      }
     }, 25);
 
     return () => clearTimeout(timer);

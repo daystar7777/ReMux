@@ -2270,9 +2270,9 @@ export default function App() {
   };
 
   const onDoubleClick = async (paneId: string) => {
+    setViewMode((m) => (m === "focus" ? "normal" : "focus"));
     const binding = bindingsRef.current.get(paneId);
     if (binding?.kind === "tmux") {
-      setViewMode((m) => (m === "focus" ? "normal" : "focus"));
       await executeTmuxCommand("zoom", paneId);
     }
   };
