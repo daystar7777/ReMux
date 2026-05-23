@@ -92,7 +92,6 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
       scrollback: 5000,
       macOptionIsMeta: appearance.macOptionIsMeta,
       macOptionClickForcesSelection: true,
-      windowsMode: false,
       convertEol: false,
       theme: getThemeColors(appearance.themeName),
     });

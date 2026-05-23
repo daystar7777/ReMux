@@ -20,6 +20,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "remux"
 path = "src/main.rs"
 
+[[example]]
+name = "pty_claude_diag"
+path = "examples/pty_claude_diag.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
