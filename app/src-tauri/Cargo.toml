@@ -5,10 +5,20 @@ description = "REMUX desktop terminal manager for local and remote tmux"
 authors = ["REMUX team"]
 edition = "2021"
 default-run = "remux"
+# Disable cargo's automatic discovery of binaries under src/bin/. Without
+# this, any dev-only probe a developer drops into src/bin/ would be built
+# and bundled into the Tauri .app, which is how the test_keyring probe
+# ended up in the v0.1.0 release. Declare only the production binary
+# explicitly below.
+autobins = false
 
 [lib]
 name = "remux_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "remux"
+path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

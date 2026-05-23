@@ -33,15 +33,18 @@ tmux -S "$SOCKET" kill-server >/dev/null 2>&1 || true
 tmux -S "$SOCKET" new-session -d -s "$SESSION" -n main sleep 300
 trap 'tmux -S "$SOCKET" kill-server >/dev/null 2>&1 || true' EXIT
 
-FORMAT='#{pane_id}	#{window_id}	#{session_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_title}	#{pane_pid}	#{pane_current_command}	#{pane_current_path}'
+# tmux 3.6 replaces literal tab characters in -F format output with '_',
+# so the smoke test uses '|' as the field separator instead. Pane fields
+# (ids, indices, hostname-based titles, current cwd) never contain '|'.
+FORMAT='#{pane_id}|#{window_id}|#{session_id}|#{session_name}|#{window_index}|#{window_name}|#{pane_index}|#{pane_title}|#{pane_pid}|#{pane_current_command}|#{pane_current_path}'
 initial="$(tmux -S "$SOCKET" list-panes -a -F "$FORMAT")"
 if [[ "$initial" != *"$SESSION"* ]]; then
   echo "tmux smoke failed: initial pane list did not include $SESSION" >&2
   exit 1
 fi
 
-pane_id="$(printf '%s\n' "$initial" | awk -F '\t' 'NR == 1 {print $1}')"
-window_id="$(printf '%s\n' "$initial" | awk -F '\t' 'NR == 1 {print $2}')"
+pane_id="$(printf '%s\n' "$initial" | awk -F '|' 'NR == 1 {print $1}')"
+window_id="$(printf '%s\n' "$initial" | awk -F '|' 'NR == 1 {print $2}')"
 
 tmux -S "$SOCKET" split-window -h -t "$pane_id"
 pane_count="$(tmux -S "$SOCKET" list-panes -a -F "$FORMAT" | wc -l | tr -d ' ')"
@@ -58,13 +61,13 @@ if [[ -z "$layout_name" ]]; then
 fi
 
 tmux -S "$SOCKET" rename-window -t "$window_id" renamed
-if ! tmux -S "$SOCKET" list-panes -a -F "$FORMAT" | grep -q $'\trenamed\t'; then
+if ! tmux -S "$SOCKET" list-panes -a -F "$FORMAT" | grep -q '|renamed|'; then
   echo "tmux smoke failed: rename-window did not appear in pane list" >&2
   exit 1
 fi
 
 tmux -S "$SOCKET" select-pane -t "$pane_id" -T worker
-if ! tmux -S "$SOCKET" list-panes -a -F "$FORMAT" | grep -q $'\tworker\t'; then
+if ! tmux -S "$SOCKET" list-panes -a -F "$FORMAT" | grep -q '|worker|'; then
   echo "tmux smoke failed: pane title did not appear in pane list" >&2
   exit 1
 fi

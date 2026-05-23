@@ -27,7 +27,13 @@ pub struct TmuxPaneIdentity {
     pub pane_current_path: Option<String>,
 }
 
-pub const PANE_LIST_FORMAT: &str = "#{pane_id}\t#{window_id}\t#{session_id}\t#{session_name}\t#{window_index}\t#{window_name}\t#{window_layout}\t#{pane_index}\t#{pane_title}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}";
+// tmux 3.6 replaces any control character (\t, \x1f, etc.) in -F format
+// output with '_' before printing, so the separator must be a printable
+// character. '|' is safe because tmux session names are validated to
+// disallow it and pane fields (ids, indices, hostname-based titles,
+// current cwd, command names) never legitimately contain pipes.
+pub const PANE_LIST_FIELD_SEPARATOR: char = '|';
+pub const PANE_LIST_FORMAT: &str = "#{pane_id}|#{window_id}|#{session_id}|#{session_name}|#{window_index}|#{window_name}|#{window_layout}|#{pane_index}|#{pane_title}|#{pane_pid}|#{pane_current_command}|#{pane_current_path}";
 
 pub fn resolve_tmux_path(binary: Option<&str>) -> String {
     let bin = binary.unwrap_or("tmux");
@@ -284,7 +290,7 @@ pub fn build_kill_window(
 
 
 pub fn parse_pane_row(row: &str) -> Option<TmuxPaneIdentity> {
-    let parts: Vec<&str> = row.split('\t').collect();
+    let parts: Vec<&str> = row.split(PANE_LIST_FIELD_SEPARATOR).collect();
     if parts.len() < 11 {
         return None;
     }
@@ -560,7 +566,7 @@ mod tests {
 
     #[test]
     fn parses_pane_row() {
-        let row = "%3\t@1\t$0\tremux\t2\tapi\tbb62,120x40,0,0{60x40,0,0,1,59x40,61,0,3}\t1\tvim\t12345\tnvim\t/Users/storysq/REMUX";
+        let row = "%3|@1|$0|remux|2|api|bb62,120x40,0,0{60x40,0,0,1,59x40,61,0,3}|1|vim|12345|nvim|/Users/storysq/REMUX";
         let pane = parse_pane_row(row).unwrap();
         assert_eq!(pane.pane_id, "%3");
         assert_eq!(pane.window_id, "@1");
@@ -580,7 +586,7 @@ mod tests {
 
     #[test]
     fn parses_legacy_pane_row_without_window_layout() {
-        let row = "%3\t@1\t$0\tremux\t2\tapi\t1\tvim\t12345\tnvim\t/Users/storysq/REMUX";
+        let row = "%3|@1|$0|remux|2|api|1|vim|12345|nvim|/Users/storysq/REMUX";
         let pane = parse_pane_row(row).unwrap();
         assert_eq!(pane.window_layout, None);
         assert_eq!(pane.pane_index, 1);
