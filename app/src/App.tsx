@@ -2270,6 +2270,7 @@ export default function App() {
   };
 
   const onDoubleClick = async (paneId: string) => {
+    console.log(`[ReMux DBG] onDoubleClick triggered in App.tsx for paneId: ${paneId}`);
     // Synchronously select the pane to make sure it is active before zooming!
     if (activeTab) {
       updateTab({

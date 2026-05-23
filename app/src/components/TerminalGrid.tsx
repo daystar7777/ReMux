@@ -480,6 +480,7 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
               <button
                 className="icon-btn"
                 onClick={() => {
+                  console.log(`[ReMux DBG] Zoom button clicked in header for pane: ${node.id}`);
                   if (onDoubleClick) {
                     onDoubleClick(node.id);
                   }
