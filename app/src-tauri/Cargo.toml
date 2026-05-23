@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "REMUX desktop terminal manager for local and remote tmux"
 authors = ["REMUX team"]
 edition = "2021"
+default-run = "remux"
 
 [lib]
 name = "remux_lib"

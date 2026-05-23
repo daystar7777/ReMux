@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { SquarePlus, X, Sliders } from "lucide-react";
+import { SquarePlus, X, Sliders, Server, Layers } from "lucide-react";
 import {
   activeTabIdAtom,
   closeTabAction,
@@ -9,6 +9,8 @@ import {
   hostsAtom,
   rightPanelOpenAtom,
   updateProfileAction,
+  sidebarCollapsedAtom,
+  inventorySidebarCollapsedAtom,
 } from "../state/atoms";
 import { openNewWindow } from "../lib/ipc";
 
@@ -25,6 +27,8 @@ export function TopTabs({ onRenameWindowDirect }: TopTabsProps) {
   const closeTab = useSetAtom(closeTabAction);
   const [panelOpen, setPanelOpen] = useAtom(rightPanelOpenAtom);
   const updateProfile = useSetAtom(updateProfileAction);
+  const [sidebarCollapsed, setSidebarCollapsed] = useAtom(sidebarCollapsedAtom);
+  const [inventoryCollapsed, setInventoryCollapsed] = useAtom(inventorySidebarCollapsedAtom);
 
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState("");
@@ -132,6 +136,34 @@ export function TopTabs({ onRenameWindowDirect }: TopTabsProps) {
         );
       })}
       <div className="spacer" />
+      <button
+        className="icon-btn"
+        title="Toggle connections sidebar (Cmd+B)"
+        onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+        style={{
+          color: !sidebarCollapsed ? "var(--accent)" : "var(--fg-1)",
+          borderColor: !sidebarCollapsed ? "var(--accent-dim)" : "transparent",
+          background: !sidebarCollapsed ? "rgba(106, 169, 255, 0.1)" : "transparent",
+          marginRight: "6px",
+        }}
+        aria-label="Toggle connections sidebar"
+      >
+        <Server size={14} />
+      </button>
+      <button
+        className="icon-btn"
+        title="Toggle tmux inventory panel (Cmd+Shift+I)"
+        onClick={() => setInventoryCollapsed(!inventoryCollapsed)}
+        style={{
+          color: !inventoryCollapsed ? "var(--accent)" : "var(--fg-1)",
+          borderColor: !inventoryCollapsed ? "var(--accent-dim)" : "transparent",
+          background: !inventoryCollapsed ? "rgba(106, 169, 255, 0.1)" : "transparent",
+          marginRight: "6px",
+        }}
+        aria-label="Toggle tmux inventory panel"
+      >
+        <Layers size={14} />
+      </button>
       <button
         className="icon-btn"
         title="Toggle appearance settings drawer"

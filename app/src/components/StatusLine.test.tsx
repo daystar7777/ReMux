@@ -103,22 +103,22 @@ afterEach(() => {
 });
 
 describe("StatusLine remote auth policy", () => {
-  it("shows password-auth remote as interactive-only and disables tmux mouse handoff", () => {
+  it("does not show password-auth remote as interactive-only anymore and still allows toggling mouse policy to tmux", () => {
     const store = renderStatusLine(passwordHost);
 
-    expect(document.body.textContent).toContain("remote interactive-only");
-    expect(document.body.textContent).toContain("mouse\u00a0REMUX*");
+    expect(document.body.textContent).not.toContain("remote interactive-only");
+    expect(document.body.textContent).toContain("mouse\u00a0REMUX");
 
     const mouseButton = Array.from(document.querySelectorAll("button")).find((button) =>
       button.textContent?.includes("mouse"),
     ) as HTMLButtonElement | undefined;
     expect(mouseButton).toBeTruthy();
-    expect(mouseButton?.disabled).toBe(true);
+    expect(mouseButton?.disabled).toBe(false);
 
     act(() => {
       mouseButton?.click();
     });
-    expect(store.get(mousePolicyAtom)).toBe("remux");
+    expect(store.get(mousePolicyAtom)).toBe("tmux");
   });
 
   it("allows tmux mouse handoff for key-auth remote hosts", () => {

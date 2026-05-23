@@ -24,7 +24,7 @@ import {
   summarize,
   wrapBracketedPaste,
 } from "../lib/clipboard";
-import { clipboardRead, clipboardWrite } from "../lib/ipc";
+import { clipboardRead, clipboardWrite, logDebug } from "../lib/ipc";
 
 
 export interface TerminalHandle {
@@ -43,10 +43,13 @@ export interface PasteRequest {
 interface Props {
   onInput?: (data: string) => void;
   onResize?: (cols: number, rows: number) => void;
+  onFocus?: () => void;
   onDoubleClick?: () => void;
   onPasteRequested?: (req: PasteRequest) => void;
   localEcho?: boolean;
+  isActive?: boolean;
 }
+
 
 export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
   props,
@@ -87,7 +90,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
       cursorStyle: "block",
       allowProposedApi: true,
       scrollback: 5000,
-      macOptionIsMeta: true,
+      macOptionIsMeta: appearance.macOptionIsMeta,
       macOptionClickForcesSelection: true,
       windowsMode: false,
       convertEol: false,
@@ -107,6 +110,23 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
       })
     );
     term.open(containerRef.current);
+
+    // Intercept and swallow Primary and Secondary Device Attributes queries
+    // to prevent automated xterm.js responses from being written back to PTY stdin.
+    // Over IPC/latency-prone channels, these responses miss the query's read window
+    // and leak as literal text in the user's terminal input buffer.
+    term.parser.registerCsiHandler({ final: "c" }, (params) => {
+      logDebug("[CSI HANDLER] final: c, params: " + JSON.stringify(params));
+      return true;
+    });
+    term.parser.registerCsiHandler({ final: "c", prefix: ">" }, (params) => {
+      logDebug("[CSI HANDLER] final: c, prefix: >, params: " + JSON.stringify(params));
+      return true;
+    });
+    term.parser.registerCsiHandler({ final: "c", prefix: "?" }, (params) => {
+      logDebug("[CSI HANDLER] final: c, prefix: ?, params: " + JSON.stringify(params));
+      return true;
+    });
 
     try {
       const webgl = new WebglAddon();
@@ -207,6 +227,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
     const MOUSE_SGR = /^\x1b\[<\d+;\d+;\d+[Mm]/;
     const MOUSE_X10 = /^\x1b\[M/;
     const onDataDisposer = term.onData((data) => {
+      logDebug("[xterm.onData] " + JSON.stringify(data));
       if (composingRef.current) {
         return;
       }
@@ -226,6 +247,12 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
     const helper = term.textarea;
     const detachHelperListeners: (() => void)[] = [];
     if (helper) {
+      const onHelperFocus = () => {
+        propsRef.current.onFocus?.();
+      };
+      helper.addEventListener("focus", onHelperFocus);
+      detachHelperListeners.push(() => helper.removeEventListener("focus", onHelperFocus));
+
       const onStart = (e: CompositionEvent) => {
         composingRef.current = true;
         setComposing(true);
@@ -282,9 +309,14 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
       setClipboard(summarize(sel));
     };
 
+    const onMouseDown = () => {
+      propsRef.current.onFocus?.();
+    };
+
     root.addEventListener("dblclick", onDblClick);
     root.addEventListener("contextmenu", onContextMenu);
     root.addEventListener("mouseup", onMouseUp);
+    root.addEventListener("mousedown", onMouseDown, true);
 
     const observer = new ResizeObserver(() => fit.fit());
     observer.observe(root);
@@ -297,6 +329,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
       root.removeEventListener("dblclick", onDblClick);
       root.removeEventListener("contextmenu", onContextMenu);
       root.removeEventListener("mouseup", onMouseUp);
+      root.removeEventListener("mousedown", onMouseDown, true);
       webglRef.current?.dispose();
       term.dispose();
       termRef.current = null;
@@ -318,6 +351,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
     term.options.lineHeight = appearance.lineHeight;
     term.options.letterSpacing = appearance.letterSpacing;
     term.options.theme = getThemeColors(appearance.themeName);
+    term.options.macOptionIsMeta = appearance.macOptionIsMeta;
 
     // Give xterm and DOM a tiny tick to settle before measuring dimensions
     const timer = setTimeout(() => {
@@ -326,6 +360,53 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
 
     return () => clearTimeout(timer);
   }, [appearance]);
+
+
+  // Declarative Focus Lock: Ensure the active terminal always retains physical browser focus
+  // upon any React render/DOM updates without using arbitrary setTimeouts.
+  useEffect(() => {
+    if (props.isActive) {
+      const textarea = termRef.current?.textarea;
+      if (textarea && document.activeElement !== textarea) {
+        // Strict guard: Do NOT steal focus if the user is focusing a genuine form input,
+        // modal/dialog, sidebar, button, or any interactive control outside the terminal.
+        const active = document.activeElement;
+        if (active) {
+          const isTerminalTextarea = active.closest(".terminal-host") !== null;
+          const activeWrapper = active.closest(".terminal-pane-wrapper");
+          const isFocusedOnActiveTerminal = isTerminalTextarea && activeWrapper?.classList.contains("active") === true;
+
+          const isInput = (active.tagName === "INPUT" || active.tagName === "SELECT" || active.tagName === "TEXTAREA") && !isTerminalTextarea;
+          const isButton = active.tagName === "BUTTON";
+          const isDialogOrInteractive = active.closest("[role='dialog']") || 
+                                       active.closest(".modal") || 
+                                       active.closest(".sidebar") || 
+                                       active.closest(".presets-dropdown");
+          
+          if (isInput || isButton || isDialogOrInteractive || isFocusedOnActiveTerminal) {
+            return; // Safe exit: Let the user interact with modals, forms, sidebars, or the active terminal!
+          }
+
+          // If the currently focused element is another terminal's textarea,
+          // only skip focusing if the focused terminal is the target of a very recent user interaction (within 1000ms).
+          // Otherwise, we are programmatic focus or a stale background state, so we must claim focus!
+          if (isTerminalTextarea) {
+            const otherPaneId = activeWrapper?.getAttribute("data-pane-id");
+            const lastInteractedPane = document.body.getAttribute("data-last-interaction-pane");
+            const lastInteractionTimeStr = document.body.getAttribute("data-last-interaction-time");
+            const lastInteractionTime = lastInteractionTimeStr ? Number(lastInteractionTimeStr) : 0;
+            const elapsed = Date.now() - lastInteractionTime;
+
+            if (otherPaneId && otherPaneId === lastInteractedPane && elapsed < 1000) {
+              return;
+            }
+          }
+        }
+
+        termRef.current?.focus();
+      }
+    }
+  });
 
   useImperativeHandle(
     ref,

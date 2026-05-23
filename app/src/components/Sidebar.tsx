@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { ChevronsLeft, ChevronsRight, Plus, Server, Edit, Trash2, MoreVertical, PlusCircle } from "lucide-react";
+import { ChevronsLeft, Plus, Server, Edit, Trash2, MoreVertical, PlusCircle } from "lucide-react";
 import {
   hostsAtom,
   openTabAction,
@@ -68,6 +68,10 @@ export function Sidebar() {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
+
+  if (collapsed) {
+    return null;
+  }
 
   const handleContextMenu = (e: React.MouseEvent, type: "host" | "profile", id: string) => {
     e.preventDefault();
@@ -145,15 +149,15 @@ export function Sidebar() {
   }
 
   return (
-    <aside className={`sidebar${collapsed ? " collapsed" : ""}`}>
+    <aside className="sidebar">
       <div className="sidebar-header">
         <span>Connections</span>
         <button
           className="icon-btn"
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          onClick={() => setCollapsed((c) => !c)}
+          aria-label="Collapse sidebar"
+          onClick={() => setCollapsed(true)}
         >
-          {collapsed ? <ChevronsRight size={14} /> : <ChevronsLeft size={14} />}
+          <ChevronsLeft size={14} />
         </button>
       </div>
 
@@ -351,7 +355,6 @@ export function Sidebar() {
           host={editingHost}
           onClose={() => setHostModalOpen(false)}
           onSave={async (payload) => {
-            setHostModalOpen(false);
             if (editingHost) {
               await updateHost(payload);
             } else {
@@ -366,17 +369,16 @@ export function Sidebar() {
         <ProfileModal
           profile={editingProfile}
           hosts={hosts}
-          onClose={() => setProfileModalOpen(false)}
-          onSave={async (savedProfile) => {
+          defaultHostId={editingHost?.id}
+          onClose={() => {
             setProfileModalOpen(false);
+            setEditingHost(undefined);
+            setEditingProfile(undefined);
+          }}
+          onSave={async (savedProfile) => {
             if (editingProfile) {
               await updateProfile(savedProfile);
             } else {
-              // If we clicked "+" on a specific host, we pre-filled hostId in editingHost.
-              // We support linking properly
-              if (editingHost && !editingProfile) {
-                savedProfile.host_id = editingHost.id;
-              }
               await addProfile(savedProfile);
             }
           }}

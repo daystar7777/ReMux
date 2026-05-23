@@ -17,6 +17,12 @@ const xtermMock = vi.hoisted(() => {
     options: Record<string, unknown>;
     private dataHandlers: DataHandler[] = [];
 
+    parser = {
+      registerCsiHandler: () => ({
+        dispose: () => {},
+      }),
+    };
+
     constructor(options: Record<string, unknown>) {
       this.options = options;
       MockTerminal.instances.push(this);
@@ -95,6 +101,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("../lib/ipc", () => ({
   clipboardRead: vi.fn(async () => ""),
   clipboardWrite: vi.fn(async () => {}),
+  logDebug: vi.fn(async () => {}),
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

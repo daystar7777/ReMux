@@ -47,6 +47,7 @@ export const CONFIG_VERSION = 1;
 
 export const newHostId = () => `host_${crypto.randomUUID()}`;
 export const newProfileId = () => `prof_${crypto.randomUUID()}`;
+export const TMUX_SESSION_NAME_PATTERN = /^[A-Za-z0-9_.-]+$/;
 
 export const defaultLocalHost = (): Host => ({
   id: newHostId(),
@@ -97,6 +98,9 @@ export const validateProfile = (profile: Partial<Profile>): string | null => {
   }
   if (!profile.tmux_session_name || !profile.tmux_session_name.trim()) {
     return "Tmux session name is required";
+  }
+  if (!TMUX_SESSION_NAME_PATTERN.test(profile.tmux_session_name.trim())) {
+    return "Tmux session name may only contain letters, numbers, dots, underscores, and hyphens";
   }
   return null;
 };

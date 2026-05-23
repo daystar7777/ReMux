@@ -261,13 +261,15 @@ describe("appearance settings", () => {
     const current = store.get(appearanceAtom);
     expect(current.themeName).toBe(DEFAULT_APPEARANCE.themeName);
     expect(current.fontSize).toBe(DEFAULT_APPEARANCE.fontSize);
+    expect(current.macOptionIsMeta).toBe(false);
 
     // Update settings
-    store.set(updateAppearanceAction, { themeName: "Dracula", fontSize: 16 });
+    store.set(updateAppearanceAction, { themeName: "Dracula", fontSize: 16, macOptionIsMeta: true });
     
     const updated = store.get(appearanceAtom);
     expect(updated.themeName).toBe("Dracula");
     expect(updated.fontSize).toBe(16);
+    expect(updated.macOptionIsMeta).toBe(true);
     expect(updated.lineHeight).toBe(DEFAULT_APPEARANCE.lineHeight); // Unchanged fields remain
   });
 

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useAtom, useAtomValue } from "jotai";
-import { ChevronRight, ChevronDown, Terminal, Layers, Folder, RefreshCw, Eye, Plus, SquarePen, Trash2 } from "lucide-react";
+import { ChevronRight, ChevronDown, Terminal, Layers, Folder, RefreshCw, Plus, SquarePen, Trash2 } from "lucide-react";
 import {
   activeTabAtom,
   activeHostAtom,
@@ -15,6 +15,7 @@ interface InventorySidebarProps {
   onNewWindow?: (sessionName: string) => void;
   onKillWindow?: (sessionName: string, windowId: string, windowName: string) => void;
   onRenameWindow?: (sessionName: string, windowId: string, windowName: string) => void;
+  onSelectPane?: (sessionName: string, windowName: string, paneId: string, paneIndex: number) => void;
 }
 
 export const InventorySidebar: React.FC<InventorySidebarProps> = ({
@@ -22,6 +23,7 @@ export const InventorySidebar: React.FC<InventorySidebarProps> = ({
   onNewWindow,
   onKillWindow,
   onRenameWindow,
+  onSelectPane,
 }) => {
   const [collapsed, setCollapsed] = useAtom(inventorySidebarCollapsedAtom);
   const activeTab = useAtomValue(activeTabAtom);
@@ -70,42 +72,7 @@ export const InventorySidebar: React.FC<InventorySidebarProps> = ({
   };
 
   if (collapsed) {
-    return (
-      <div
-        className="inventory-sidebar collapsed"
-        onClick={() => setCollapsed(false)}
-        style={{
-          width: "28px",
-          background: "var(--glass-bg)",
-          backdropFilter: "blur(20px)",
-          borderRight: "1px solid var(--border)",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          paddingTop: "12px",
-          cursor: "pointer",
-          transition: "all 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
-          userSelect: "none",
-        }}
-        title="Expand Tmux Inventory"
-      >
-        <Eye size={12} style={{ color: "var(--fg-2)" }} />
-        <span
-          style={{
-            writingMode: "vertical-rl",
-            transform: "rotate(180deg)",
-            fontSize: "10px",
-            fontWeight: 600,
-            letterSpacing: "0.06em",
-            textTransform: "uppercase",
-            color: "var(--fg-2)",
-            marginTop: "16px",
-          }}
-        >
-          Inventory
-        </span>
-      </div>
-    );
+    return null;
   }
 
   return (
@@ -205,6 +172,13 @@ export const InventorySidebar: React.FC<InventorySidebarProps> = ({
                 {/* Session Node */}
                 <div
                   className={`tree-node session-node ${isSessionActive ? "active" : ""}`}
+                  onClick={() => {
+                    setCollapsedNodes((prev) => ({
+                      ...prev,
+                      [`s_${session.sessionId}`]: !prev[`s_${session.sessionId}`],
+                    }));
+                    onAttachToTarget(session.sessionName);
+                  }}
                   onDoubleClick={() => onAttachToTarget(session.sessionName)}
                   style={{
                     display: "flex",
@@ -272,6 +246,13 @@ export const InventorySidebar: React.FC<InventorySidebarProps> = ({
                           {/* Window Node */}
                           <div
                             className={`tree-node window-node ${isWindowActive ? "active" : ""}`}
+                            onClick={() => {
+                              setCollapsedNodes((prev) => ({
+                                ...prev,
+                                [`w_${window.windowId}`]: !prev[`w_${window.windowId}`],
+                              }));
+                              onAttachToTarget(session.sessionName, window.windowName);
+                            }}
                             onDoubleClick={() => onAttachToTarget(session.sessionName, window.windowName)}
                             style={{
                               display: "flex",
@@ -374,12 +355,20 @@ export const InventorySidebar: React.FC<InventorySidebarProps> = ({
                                   <div
                                     key={pane.paneId}
                                     className={`tree-node pane-node ${isPaneFocused ? "active" : ""}`}
+                                    onClick={() => {
+                                      onSelectPane?.(
+                                        session.sessionName,
+                                        window.windowName,
+                                        pane.paneId,
+                                        pane.paneIndex
+                                      );
+                                    }}
                                     style={{
                                       display: "flex",
                                       alignItems: "center",
                                       padding: "3px 8px 3px 18px",
                                       borderRadius: "4px",
-                                      cursor: "default",
+                                      cursor: "pointer",
                                       fontSize: "10.5px",
                                       color: isPaneFocused ? "var(--accent)" : "var(--fg-2)",
                                       gap: "6px",

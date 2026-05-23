@@ -7,13 +7,12 @@ export const PASSWORD_REMOTE_COMMAND_CHANNEL_REASON =
 
 export function supportsNativeTmuxCommands(host: Host | null | undefined): boolean {
   if (!host) return false;
-  return host.auth_method !== "password";
+  return true;
 }
 
 export function nativeTmuxDisabledReason(
-  host: Host | null | undefined,
-  action = "Native tmux commands",
+  _host: Host | null | undefined,
+  _action = "Native tmux commands",
 ): string | undefined {
-  if (!host || supportsNativeTmuxCommands(host)) return undefined;
-  return `${action} require key/agent/alias auth until password sessions have a command channel.`;
+  return undefined;
 }

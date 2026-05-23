@@ -288,6 +288,30 @@ export function AppearancePanel() {
           />
         </div>
 
+        {/* Keyboard Settings Section */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "4px", paddingTop: "14px", borderTop: "1px solid var(--border)" }}>
+          <span style={{ fontSize: "10px", fontWeight: 600, color: "var(--fg-2)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+            Keyboard Settings
+          </span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg-2)", padding: "10px 12px", borderRadius: "8px", border: "1px solid var(--border)" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "2px", paddingRight: "8px" }}>
+              <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--fg-1)" }}>Option as Meta Key</span>
+              <span style={{ fontSize: "9px", color: "var(--fg-3)", lineHeight: "1.2" }}>Allows Option/Alt to work as Meta (e.g. Emacs)</span>
+            </div>
+            <input
+              type="checkbox"
+              checked={appearance.macOptionIsMeta}
+              onChange={(e) => updateAppearance({ macOptionIsMeta: e.target.checked })}
+              style={{
+                width: "16px",
+                height: "16px",
+                accentColor: "var(--accent)",
+                cursor: "pointer",
+              }}
+            />
+          </div>
+        </div>
+
         {/* Performance & Diagnostics Section */}
         <div style={{ display: "flex", flexDirection: "column", gap: "14px", marginTop: "4px", paddingTop: "14px", borderTop: "1px solid var(--border)" }}>
           <span style={{ fontSize: "10px", fontWeight: 600, color: "var(--fg-2)", letterSpacing: "0.06em", textTransform: "uppercase" }}>

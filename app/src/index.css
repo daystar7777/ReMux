@@ -894,6 +894,11 @@ button:hover {
   }
 }
 
+.terminal-pane-wrapper {
+  border: 2px solid transparent;
+  box-sizing: border-box;
+}
+
 .terminal-pane-wrapper.active {
   animation: active-pulse-glow 2.5s infinite ease-in-out;
   z-index: 5;

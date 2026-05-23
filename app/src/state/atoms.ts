@@ -358,7 +358,11 @@ export const addHostAction = atom(
         ? (payload as HostSavePayload)
         : { host: payload as Host };
     const current = get(configAtom);
-    const next = { ...current, hosts: [...current.hosts, wrapped.host] };
+    const exists = current.hosts.some((h) => h.id === wrapped.host.id);
+    const nextHosts = exists
+      ? current.hosts.map((h) => (h.id === wrapped.host.id ? wrapped.host : h))
+      : [...current.hosts, wrapped.host];
+    const next = { ...current, hosts: nextHosts };
     set(configAtom, next);
     await saveConfig(next);
     await persistHostSecret(wrapped);
@@ -427,7 +431,11 @@ export const deleteHostAction = atom(null, async (get, set, hostId: string) => {
 
 export const addProfileAction = atom(null, async (get, set, profile: Profile) => {
   const current = get(configAtom);
-  const next = { ...current, profiles: [...current.profiles, profile] };
+  const exists = current.profiles.some((p) => p.id === profile.id);
+  const nextProfiles = exists
+    ? current.profiles.map((p) => (p.id === profile.id ? profile : p))
+    : [...current.profiles, profile];
+  const next = { ...current, profiles: nextProfiles };
   set(configAtom, next);
   await saveConfig(next);
 });
@@ -748,6 +756,7 @@ export interface TerminalAppearance {
   letterSpacing: number;
   fontFamily: string;
   zoom: number; // multiplier e.g. 0.8 to 1.5
+  macOptionIsMeta: boolean;
 }
 
 export const DEFAULT_APPEARANCE: TerminalAppearance = {
@@ -757,6 +766,7 @@ export const DEFAULT_APPEARANCE: TerminalAppearance = {
   letterSpacing: 0,
   fontFamily: '"SF Mono", Menlo, "DejaVu Sans Mono", "Apple SD Gothic Neo", "Noto Sans Mono CJK KR", monospace',
   zoom: 1.0,
+  macOptionIsMeta: false,
 };
 
 function loadAppearance(): TerminalAppearance {
@@ -773,6 +783,7 @@ function loadAppearance(): TerminalAppearance {
       letterSpacing: typeof parsed.letterSpacing === "number" ? parsed.letterSpacing : DEFAULT_APPEARANCE.letterSpacing,
       fontFamily: parsed.fontFamily ?? DEFAULT_APPEARANCE.fontFamily,
       zoom: typeof parsed.zoom === "number" ? parsed.zoom : DEFAULT_APPEARANCE.zoom,
+      macOptionIsMeta: typeof parsed.macOptionIsMeta === "boolean" ? parsed.macOptionIsMeta : DEFAULT_APPEARANCE.macOptionIsMeta,
     };
   } catch {
     return DEFAULT_APPEARANCE;

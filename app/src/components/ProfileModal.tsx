@@ -7,11 +7,13 @@ import { tmuxProbeHierarchy, probeRemoteEnv, tmuxLocalVersion, type TmuxSessionN
 interface ProfileModalProps {
   profile?: Profile; // If provided, edit mode
   hosts: Host[];
+  defaultHostId?: string;
   onClose: () => void;
-  onSave: (profile: Profile) => void;
+  onSave: (profile: Profile) => Promise<void>;
 }
 
-export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalProps) {
+export function ProfileModal({ profile, hosts, defaultHostId, onClose, onSave }: ProfileModalProps) {
+  const [profileId] = useState(() => profile?.id || newProfileId());
   const [displayAlias, setDisplayAlias] = useState("");
   const [hostId, setHostId] = useState("");
   const [tmuxSessionName, setTmuxSessionName] = useState("remux-dev");
@@ -33,13 +35,16 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
       setHostId(profile.host_id || "");
       setTmuxSessionName(profile.tmux_session_name || "remux-dev");
       setTmuxWindowTarget(profile.tmux_window_target || "");
+    } else if (defaultHostId) {
+      setHostId(defaultHostId);
     } else if (hosts.length > 0) {
       // Default to first host
       setHostId(hosts[0].id);
     }
-  }, [profile, hosts]);
+  }, [profile, hosts, defaultHostId]);
 
   const probeHost = async (host: Host) => {
+    if (hostId !== host.id) return;
     setProbing(true);
     setProbeError(null);
     setIsTmuxMissing(false);
@@ -48,6 +53,7 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
     try {
       if (host.auth_method === "local") {
         const localVersion = await tmuxLocalVersion(host.custom_tmux_binary || undefined);
+        if (hostId !== host.id) return;
         if (!localVersion) {
           setIsTmuxMissing(true);
           setProbing(false);
@@ -57,6 +63,7 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
           tmuxBinary: host.custom_tmux_binary || undefined,
           socketPath: host.tmux_socket_path || undefined,
         });
+        if (hostId !== host.id) return;
         setSessions(data);
       } else {
         // Remote host
@@ -70,7 +77,9 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
             proxyJump: host.proxy_jump || undefined,
             identityAgent: host.identity_agent || undefined,
             skipHostKeyCheck: host.skip_host_key_check,
+            customTmuxBinary: host.custom_tmux_binary || undefined,
           });
+          if (hostId !== host.id) return;
           if (!env.tmuxPresent) {
             setIsTmuxMissing(true);
             setProbing(false);
@@ -80,6 +89,7 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
           console.warn("probeRemoteEnv failed", e);
         }
 
+        if (hostId !== host.id) return;
         const data = await tmuxProbeHierarchy({
           host: host.address,
           user: host.username || undefined,
@@ -92,9 +102,11 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
           socketPath: host.tmux_socket_path || undefined,
           skipHostKeyCheck: host.skip_host_key_check,
         });
+        if (hostId !== host.id) return;
         setSessions(data);
       }
     } catch (err: any) {
+      if (hostId !== host.id) return;
       console.error("Probing failed", err);
       const errMsg = err?.toString() || "Unknown error";
       if (errMsg.toLowerCase().includes("not found") || errMsg.toLowerCase().includes("tmux_missing")) {
@@ -103,7 +115,9 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
         setProbeError(errMsg);
       }
     } finally {
-      setProbing(false);
+      if (hostId === host.id) {
+        setProbing(false);
+      }
     }
   };
 
@@ -111,6 +125,13 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
     if (!hostId) return;
     const selectedHost = hosts.find((h) => h.id === hostId);
     if (selectedHost) {
+      if (selectedHost.auth_method === "password") {
+        setSessions([]);
+        setProbeError(null);
+        setIsTmuxMissing(false);
+        setProbing(false);
+        return;
+      }
       probeHost(selectedHost);
     }
   }, [hostId, hosts]);
@@ -154,9 +175,13 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
     }
   }, [sessions, profile]);
 
-  const handleSave = (e: React.FormEvent) => {
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return;
     setError(null);
+    setSaving(true);
 
     // Validation
     const validationError = validateProfile({
@@ -166,18 +191,27 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
     });
     if (validationError) {
       setError(validationError);
+      setSaving(false);
       return;
     }
 
     const savedProfile: Profile = {
-      id: profile?.id || newProfileId(),
+      id: profileId,
       display_alias: displayAlias.trim(),
       host_id: hostId,
       tmux_session_name: tmuxSessionName.trim(),
       tmux_window_target: tmuxWindowTarget.trim() || undefined,
     };
 
-    onSave(savedProfile);
+    try {
+      await onSave(savedProfile);
+      onClose();
+    } catch (err: any) {
+      console.error("Profile save failed", err);
+      setError(err?.toString() || "Failed to save profile");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const selectedHost = hosts.find((h) => h.id === hostId);
@@ -215,7 +249,7 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
           <div className="form-group">
             <label className="form-label" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span>Target Host *</span>
-              {selectedHost && (
+              {selectedHost && selectedHost.auth_method !== "password" && (
                 <button
                   type="button"
                   onClick={() => probeHost(selectedHost)}
@@ -264,13 +298,19 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
             </div>
           )}
 
-          {probeError && !isTmuxMissing && (
+          {probeError && !isTmuxMissing && selectedHost?.auth_method !== "password" && (
             <div className="banner" style={{ margin: "2px 0 6px 0", background: "rgba(245, 176, 74, 0.08)", borderColor: "rgba(245, 176, 74, 0.25)", color: "var(--warn)" }}>
               <span>ℹ️ Could not probe active sessions: {probeError}. (You can still type details manually)</span>
             </div>
           )}
 
-          {!probing && !isTmuxMissing && !probeError && hostId && sessions.length === 0 && (
+          {selectedHost?.auth_method === "password" && (
+            <div className="banner" style={{ margin: "2px 0 6px 0", background: "rgba(106, 169, 255, 0.08)", borderColor: "rgba(106, 169, 255, 0.25)", color: "var(--accent)" }}>
+              <span>ℹ️ 비밀번호 인증 호스트는 보안 정책으로 인해 활성 세션을 사전 검색할 수 없습니다. tmux 세션 이름을 직접 입력해 주세요.</span>
+            </div>
+          )}
+
+          {!probing && !isTmuxMissing && !probeError && hostId && sessions.length === 0 && selectedHost?.auth_method !== "password" && (
             <div className="banner" style={{ margin: "2px 0 6px 0", background: "rgba(106, 169, 255, 0.05)", borderColor: "rgba(106, 169, 255, 0.15)", color: "var(--fg-1)" }}>
               <span>ℹ️ No active tmux sessions found. Enter session details below to spawn a new session.</span>
             </div>
@@ -399,8 +439,8 @@ export function ProfileModal({ profile, hosts, onClose, onSave }: ProfileModalPr
             <button type="button" onClick={onClose}>
               Cancel
             </button>
-            <button type="submit" className="primary">
-              Save Profile
+            <button type="submit" className="primary" disabled={saving}>
+              {saving ? "Saving..." : "Save Profile"}
             </button>
           </div>
         </form>

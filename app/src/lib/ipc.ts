@@ -26,6 +26,7 @@ export interface SpawnTmuxArgs {
   cols: number;
   rows: number;
   channel: Channel<PtyEvent>;
+  mouseMode?: boolean;
 }
 
 export interface SpawnSshArgs {
@@ -40,10 +41,12 @@ export interface SpawnSshArgs {
   tmuxWindow?: string;
   password?: string;
   passwordAuth?: boolean;
+  detachOthers?: boolean;
   cols: number;
   rows: number;
   channel: Channel<PtyEvent>;
   skipHostKeyCheck?: boolean;
+  mouseMode?: boolean;
 }
 
 export async function ptySpawnLocal(args: SpawnLocalArgs): Promise<string> {
@@ -291,6 +294,7 @@ export async function probeRemoteEnv(args: {
   proxyJump?: string;
   identityAgent?: string;
   skipHostKeyCheck?: boolean;
+  customTmuxBinary?: string;
 }): Promise<RemoteEnvProbe> {
   return invoke<RemoteEnvProbe>("probe_remote_env", args);
 }
@@ -313,6 +317,10 @@ export async function clipboardWrite(text: string): Promise<void> {
 
 export async function openNewWindow(): Promise<string> {
   return invoke<string>("open_new_window");
+}
+
+export async function logDebug(msg: string): Promise<void> {
+  return invoke<void>("log_debug", { msg });
 }
 
 export const REMUX_SERVICE = "com.remux.app";

@@ -104,6 +104,26 @@ describe("validateProfile", () => {
     expect(validateProfile(invalid)).toBe("Tmux session name is required");
   });
 
+  it("rejects session names that the backend config validator would refuse", () => {
+    const invalidNames = [
+      "dev session",
+      "prod/api",
+      "logs:tail",
+      "한글",
+      "dev;rm",
+    ];
+
+    for (const tmux_session_name of invalidNames) {
+      expect(
+        validateProfile({
+          display_alias: "Work",
+          host_id: "host_123",
+          tmux_session_name,
+        }),
+      ).toBe("Tmux session name may only contain letters, numbers, dots, underscores, and hyphens");
+    }
+  });
+
   it("passes validation for a fully valid profile configuration", () => {
     const valid = {
       display_alias: "Work Session",

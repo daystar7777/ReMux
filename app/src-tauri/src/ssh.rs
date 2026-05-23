@@ -12,6 +12,8 @@ pub struct SshLaunchArgs<'a> {
     pub tmux_window: Option<&'a str>,
     pub skip_host_key_check: bool,
     pub password_auth: bool,
+    pub detach_others: bool,
+    pub mouse_mode: bool,
 }
 
 pub fn build_ssh_argv(args: &SshLaunchArgs<'_>) -> Vec<String> {
@@ -21,8 +23,9 @@ pub fn build_ssh_argv(args: &SshLaunchArgs<'_>) -> Vec<String> {
             binary: None,
             socket_path: None,
             session,
-            detach_others: true,
+            detach_others: args.detach_others,
             window: args.tmux_window,
+            mouse_mode: args.mouse_mode,
         });
         let remote_cmd = shell_escape(&remote);
         argv.push(remote_cmd);
@@ -164,6 +167,8 @@ mod tests {
             tmux_window: None,
             skip_host_key_check: false,
             password_auth: false,
+            detach_others: true,
+            mouse_mode: false,
         });
         assert_eq!(argv[0], "ssh");
         assert_eq!(argv[1], "-t");
@@ -189,6 +194,8 @@ mod tests {
             tmux_window: None,
             skip_host_key_check: false,
             password_auth: false,
+            detach_others: false,
+            mouse_mode: false,
         });
         assert_eq!(
             argv,
@@ -220,6 +227,8 @@ mod tests {
             tmux_window: Some("logs"),
             skip_host_key_check: false,
             password_auth: false,
+            detach_others: false,
+            mouse_mode: false,
         });
         assert_eq!(
             &argv[0..10],
@@ -255,6 +264,8 @@ mod tests {
                 tmux_window: None,
                 skip_host_key_check: false,
                 password_auth: false,
+                detach_others: false,
+                mouse_mode: false,
             },
             &vec!["tmux".into(), "list-panes".into(), "-a".into()],
             true,
@@ -286,6 +297,8 @@ mod tests {
                 tmux_window: None,
                 skip_host_key_check: false,
                 password_auth: false,
+                detach_others: false,
+                mouse_mode: false,
             },
             &vec!["true".into()],
             true,
@@ -321,6 +334,8 @@ mod tests {
                 tmux_window: None,
                 skip_host_key_check: false,
                 password_auth: false,
+                detach_others: false,
+                mouse_mode: false,
             },
             &vec!["true".into()],
             true,
@@ -352,6 +367,8 @@ mod tests {
             tmux_window: None,
             skip_host_key_check: false,
             password_auth: true,
+            detach_others: false,
+            mouse_mode: false,
         });
         assert_eq!(argv[0], "ssh");
         assert!(argv.windows(2).any(|w| w == ["-o", "PreferredAuthentications=password"]));

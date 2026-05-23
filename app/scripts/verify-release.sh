@@ -15,7 +15,8 @@ echo "== rust tests =="
 (cd src-tauri && cargo test)
 
 echo "== tauri app bundle =="
-npm run tauri build
+npx tauri build --bundles app
+
 
 APP_BUNDLE="src-tauri/target/release/bundle/macos/REMUX.app"
 

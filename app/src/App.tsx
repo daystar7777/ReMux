@@ -10,6 +10,7 @@ import { TerminalHandle } from "./components/Terminal";
 import { TerminalGrid } from "./components/TerminalGrid";
 import { PasteGuardModal } from "./components/PasteGuardModal";
 import { FingerprintModal } from "./components/FingerprintModal";
+import { KeyPermissionsModal } from "./components/KeyPermissionsModal";
 import { TmuxFallbackModal } from "./components/TmuxFallbackModal";
 import { MissingTmuxModal } from "./components/MissingTmuxModal";
 import { RenameWindowModal } from "./components/RenameWindowModal";
@@ -108,6 +109,11 @@ interface FingerprintRequest {
   resolve: (accept: boolean) => void;
 }
 
+interface KeyPermissionRequest {
+  keyPath: string;
+  resolve: (choice: "fix" | "skip" | "cancel") => void;
+}
+
 interface SessionBinding {
   tabId: string;
   paneId: string;
@@ -133,7 +139,11 @@ const remoteSshArgs = (host: Host) => ({
   identityAgent: host.identity_agent,
   skipHostKeyCheck: host.skip_host_key_check,
   passwordAuth: host.auth_method === "password",
+  customTmuxBinary: host.custom_tmux_binary || undefined,
 });
+
+const activeBindings = new Map<string, SessionBinding>();
+const activeLaunchingPanes = new Set<string>();
 
 export default function App() {
   type TmuxCommand = "select" | "split" | "kill" | "zoom";
@@ -171,12 +181,15 @@ export default function App() {
   const telemetryInterval = useAtomValue(telemetryIntervalAtom);
   const hierarchyInterval = useAtomValue(hierarchyIntervalAtom);
   const [mousePolicy, setMousePolicy] = useAtom(mousePolicyAtom);
+  const prevMousePolicyRef = useRef<Map<string, string>>(new Map());
+  const pendingPaneFocusRef = useRef<{ sessionName: string; windowName: string; paneId: string } | null>(null);
 
   const termHandlesRef = useRef<Map<string, TerminalHandle>>(new Map());
   const viewModeRef = useRef(viewMode);
   const tabsRef = useRef(tabs);
   const [pendingPaste, setPendingPaste] = useState<PendingPaste | null>(null);
   const [fingerprintReq, setFingerprintReq] = useState<FingerprintRequest | null>(null);
+  const [keyPermissionReq, setKeyPermissionReq] = useState<KeyPermissionRequest | null>(null);
   const [missingTmuxReq, setMissingTmuxReq] = useState<{ tabId: string; isLocal: boolean } | null>(null);
   const [renameWindowReq, setRenameWindowReq] = useState<RenameWindowRequest | null>(null);
   const [disconnectedPanes, setDisconnectedPanes] = useState<Map<string, {
@@ -184,9 +197,11 @@ export default function App() {
     retryCount: number;
     bannerMessage?: string;
   }>>(new Map());
+  const [hasSavedPassword, setHasSavedPassword] = useState<boolean>(false);
   
   // Track bindings via paneId instead of tabId
-  const bindingsRef = useRef<Map<string, SessionBinding>>(new Map());
+  const bindingsRef = useRef<Map<string, SessionBinding>>(activeBindings);
+  const launchingPanesRef = useRef<Set<string>>(activeLaunchingPanes);
 
   // Input broadcasting
   const broadcastRecord = useAtomValue(inputBroadcastAtom);
@@ -465,13 +480,11 @@ export default function App() {
               binary: activeHost.custom_tmux_binary,
               socketPath: activeHost.tmux_socket_path,
             })
-          : activeHost.auth_method === "password"
-            ? []
-            : await tmuxListRemotePanes({
-                ...remoteSshArgs(activeHost),
-                tmuxBinary: activeHost.custom_tmux_binary,
-                socketPath: activeHost.tmux_socket_path,
-              });
+          : await tmuxListRemotePanes({
+              ...remoteSshArgs(activeHost),
+              tmuxBinary: activeHost.custom_tmux_binary,
+              socketPath: activeHost.tmux_socket_path,
+            });
       const matching = panes.filter((pane) => {
         if (pane.sessionName !== activeProfile.tmux_session_name) return false;
         if (activeProfile.tmux_window_target && pane.windowName !== activeProfile.tmux_window_target) return false;
@@ -489,234 +502,489 @@ export default function App() {
     paneId: string,
     mode: "tmux" | "raw" | "install-local" | "ssh-raw" = "tmux",
   ): Promise<boolean> => {
-    if (!activeProfile || !activeHost) return false;
+    const currentTab = tabsRef.current.find((t) => t.id === tabId);
+    if (!currentTab) {
+      console.warn(`[launchSession] Tab ${tabId} not found, aborting`);
+      return false;
+    }
+    const targetProfile = profiles.find((p) => p.id === currentTab.profileId);
+    const targetHost = targetProfile ? hosts.find((h) => h.id === targetProfile.host_id) : null;
 
-    // 1. Pre-probe for tmux if connection is requested in tmux mode
-    if (mode === "tmux") {
-      if (activeHost.auth_method === "local") {
-        const v = await tmuxLocalVersion();
-        if (!v) {
-          setMissingTmuxReq({ tabId, isLocal: true });
-          return false;
-        }
-      } else {
-        try {
-          updateTab({
-            id: tabId,
-            patch: { state: "connecting", bannerMessage: "Probing remote host..." },
-          });
-          const probe = await probeRemoteEnv({
-            ...remoteSshArgs(activeHost),
-          });
-          setLocaleWarning(formatRemoteLocaleWarning(probe));
-          if (probe && !probe.tmuxPresent) {
-            updateTab({
-              id: tabId,
-              patch: { missingTmuxRemote: true },
-            });
-            void launchSession(tabId, paneId, "ssh-raw");
-            return false;
-          }
-        } catch (e) {
-          console.warn("Remote env probe failed, proceeding to direct connection", e);
-        }
+    if (!targetProfile || !targetHost) {
+      console.warn(`[launchSession] Profile or Host not found for tab ${tabId}, aborting`);
+      return false;
+    }
+
+    if (launchingPanesRef.current.has(paneId)) {
+      console.log(`[launchSession] already in progress for pane ${paneId}, skipping`);
+      return false;
+    }
+    launchingPanesRef.current.add(paneId);
+
+    // Terminate any existing PTY session for this pane to prevent zombie process/listener leaks
+    const existingBinding = bindingsRef.current.get(paneId);
+    if (existingBinding) {
+      console.log(`[launchSession] Killing existing PTY session ${existingBinding.sessionId} for pane ${paneId}`);
+      try {
+        await ptyKill(existingBinding.sessionId);
+      } catch (e) {
+        console.warn("[launchSession] Failed to kill existing PTY session", e);
       }
+      bindingsRef.current.delete(paneId);
     }
 
-    const isLocalConnection = activeHost.auth_method === "local" || mode === "raw" || mode === "install-local";
-    if (!isLocalConnection) {
-      updateTab({
-        id: tabId,
-        patch: { state: "connecting", bannerMessage: undefined },
-      });
-    }
+    // Clear any previous missing tmux or error states
+    updateTab({
+      id: tabId,
+      patch: { missingTmuxRemote: false, state: "connecting" },
+    });
 
-    let activeSessionId: string | null = null;
-    const channel = new Channel<PtyEvent>();
-    channel.onmessage = (evt) => {
-      if (evt.kind === "data") {
-        const handle = termHandlesRef.current.get(paneId);
-        handle?.write(evt.data);
-        if (viewModeRef.current === "follow") {
-          const tab = tabsRef.current.find((t) => t.id === tabId);
-          if (tab?.activePaneId !== paneId) {
-            updateTab({
-              id: tabId,
-              patch: { activePaneId: paneId },
+    try {
+      // Check private key permissions if using a key file for a remote connection
+      if (targetHost.auth_method === "keyfile" && targetHost.key_path) {
+        try {
+          const isSafe = await invoke<boolean>("check_key_permissions", { keyPath: targetHost.key_path });
+          if (!isSafe) {
+            const userChoice = await new Promise<"fix" | "skip" | "cancel">((resolve) => {
+              setKeyPermissionReq({
+                keyPath: targetHost.key_path!,
+                resolve,
+              });
             });
-          }
-        }
-      } else if (evt.kind === "fingerprint") {
-        setFingerprintReq({
-          host: activeHost.address,
-          fingerprintBlock: evt.challenge,
-          resolve: (accept) => {
-            if (accept) {
-              if (activeSessionId) {
-                void ptyWrite(activeSessionId, "yes\n");
-              }
-            } else {
-              if (activeSessionId) {
-                void ptyKill(activeSessionId);
-              }
-              const tab = tabs.find((t) => t.id === tabId);
-              if (tab && tab.layout) {
-                const nextLayout = updateLayoutPty(tab.layout, paneId, null);
-                updateTab({
-                  id: tabId,
-                  patch: {
-                    layout: nextLayout,
-                    state: "closed",
-                    bannerMessage: "SSH connection rejected by user.",
-                  },
-                });
-              }
-            }
-            setFingerprintReq(null);
-          },
-        });
-      } else if (evt.kind === "exit") {
-        const binding = bindingsRef.current.get(paneId);
-        bindingsRef.current.delete(paneId);
+            setKeyPermissionReq(null);
 
-        // Remove the ptyId from the layout node
-        const tab = tabs.find((t) => t.id === tabId);
-        if (tab && tab.layout) {
-          const nextLayout = updateLayoutPty(tab.layout, paneId, null);
-          updateTab({
-            id: tabId,
-            patch: {
-              layout: nextLayout,
-              state: binding?.kind === "tmux" ? "warning" : "closed",
-              bannerMessage: binding?.kind === "tmux" ? `tmux session ended (code ${evt.code ?? "?"}).` : undefined,
-            },
-          });
-        }
-
-        if (binding?.kind === "tmux") {
-          if (evt.code !== 0 && activeHost && activeHost.auth_method !== "local") {
-            if (evt.code === 255) {
+            if (userChoice === "cancel") {
               updateTab({
                 id: tabId,
                 patch: {
                   state: "error",
-                  bannerMessage: `SSH connection failed (code 255). Please check your SSH credentials, ssh-agent status, or key permissions.`,
+                  bannerMessage: "SSH connection cancelled because the private key file has unsafe permissions.",
                 },
               });
-              return;
-            }
-
-            setDisconnectedPanes((prev) => {
-              const next = new Map(prev);
-              next.set(paneId, {
-                countdown: 5,
-                retryCount: 0,
-                bannerMessage: `Remote tmux session disconnected abnormally (code ${evt.code ?? "unknown"}). Retrying to recover...`,
+              return false;
+            } else if (userChoice === "fix") {
+              updateTab({
+                id: tabId,
+                patch: {
+                  state: "connecting",
+                  bannerMessage: "Fixing key permissions...",
+                },
               });
-              return next;
+              try {
+                await invoke("fix_key_permissions", { keyPath: targetHost.key_path });
+              } catch (err) {
+                console.error("Failed to fix key permissions:", err);
+                updateTab({
+                  id: tabId,
+                  patch: {
+                    state: "error",
+                    bannerMessage: `Failed to fix key permissions: ${String(err)}`,
+                  },
+                });
+                return false;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("Failed to check key permissions, proceeding anyway", e);
+        }
+      }
+
+      // 1. Pre-probe for tmux if connection is requested in tmux mode
+      if (mode === "tmux") {
+        if (targetHost.auth_method === "local") {
+          const v = await tmuxLocalVersion();
+          if (!v) {
+            setMissingTmuxReq({ tabId, isLocal: true });
+            return false;
+          }
+        } else if (targetHost.auth_method === "password") {
+          // Password-authenticated hosts cannot be probed non-interactively.
+          // Skip probe and proceed directly.
+          console.log("Skipping remote env probe for password host:", targetHost.address);
+        } else {
+          try {
+            updateTab({
+              id: tabId,
+              patch: { state: "connecting", bannerMessage: "Probing remote host..." },
             });
-          } else {
-            setFallbackReq({
-              tabId,
-              sessionName: activeProfile.tmux_session_name,
-              exitCode: evt.code,
+            const probe = await probeRemoteEnv({
+              ...remoteSshArgs(targetHost),
             });
+            setLocaleWarning(formatRemoteLocaleWarning(probe));
+            if (probe && !probe.tmuxPresent) {
+              updateTab({
+                id: tabId,
+                patch: { missingTmuxRemote: true },
+              });
+              launchingPanesRef.current.delete(paneId);
+              void launchSession(tabId, paneId, "ssh-raw");
+              return false;
+            }
+          } catch (e) {
+            console.warn("Remote env probe failed, proceeding to direct connection", e);
           }
         }
       }
-    };
 
-    const handle = termHandlesRef.current.get(paneId);
-    const cols = handle?.cols() ?? 80;
-    const rows = handle?.rows() ?? 24;
-
-    try {
-      let sid: string;
-      if (mode === "raw" || mode === "install-local") {
-        sid = await ptySpawnLocal({
-          shell: undefined,
-          cwd: undefined,
-          cols,
-          rows,
-          channel,
-        });
-      } else if (mode === "ssh-raw") {
-        const savedPw =
-          activeHost.auth_method === "password"
-            ? (await secretsGet(hostAccount(activeHost.id))) || undefined
-            : undefined;
-        sid = await ptySpawnSshTmux({
-          ...remoteSshArgs(activeHost),
-          tmuxSession: undefined,
-          tmuxWindow: undefined,
-          password: savedPw,
-          cols,
-          rows,
-          channel,
-        });
-      } else if (activeHost.auth_method === "local") {
-        sid = await ptySpawnTmuxLocal({
-          session: activeProfile.tmux_session_name,
-          detachOthers: activeHost.detach_other_clients,
-          window: activeProfile.tmux_window_target,
-          socketPath: activeHost.tmux_socket_path,
-          tmuxBinary: activeHost.custom_tmux_binary,
-          cols,
-          rows,
-          channel,
-        });
-      } else {
-        const savedPw =
-          activeHost.auth_method === "password"
-            ? (await secretsGet(hostAccount(activeHost.id))) || undefined
-            : undefined;
-        sid = await ptySpawnSshTmux({
-          ...remoteSshArgs(activeHost),
-          tmuxSession: activeProfile.tmux_session_name,
-          tmuxWindow: activeProfile.tmux_window_target,
-          password: savedPw,
-          cols,
-          rows,
-          channel,
-        });
-      }
-      
-      activeSessionId = sid;
-      bindingsRef.current.set(paneId, {
-        tabId,
-        paneId,
-        sessionId: sid,
-        kind: (mode === "raw" || mode === "install-local" || mode === "ssh-raw") ? "raw" : "tmux",
-      });
-
-      const currentTab = tabs.find((t) => t.id === tabId);
-      if (currentTab && currentTab.layout) {
-        let nextLayout = updateLayoutPty(currentTab.layout, paneId, sid);
-        if (mode === "tmux") {
-          nextLayout = updateLayoutTmuxIdentity(nextLayout, paneId, await resolveTmuxIdentity());
-        }
+      const isLocalConnection = targetHost.auth_method === "local" || mode === "raw" || mode === "install-local";
+      if (!isLocalConnection) {
         updateTab({
           id: tabId,
-          patch: { layout: nextLayout, state: "connected" },
+          patch: { state: "connecting", bannerMessage: undefined },
         });
       }
 
-      setViewMode("normal");
+      let activeSessionId: string | null = null;
+      let ptyDataBuffer = "";
+      let seenInteractivePrompt = false;
+      let connectionTimer: ReturnType<typeof setTimeout> | null = null;
 
-      if (mode === "install-local") {
-        setTimeout(() => {
-          void ptyWrite(sid, "brew install tmux\n");
-        }, 500);
+      const cleanUpTimer = () => {
+        if (connectionTimer) {
+          clearTimeout(connectionTimer);
+          connectionTimer = null;
+        }
+      };
+
+      let transitionStarted = false;
+      const transitionToConnected = (sid: string) => {
+        if (transitionStarted) return;
+
+        const currentTab = tabsRef.current.find((t) => t.id === tabId);
+        if (!currentTab || currentTab.state === "connected") return;
+
+        transitionStarted = true; // Mark as started immediately to prevent async concurrency!
+        cleanUpTimer();
+        console.log(`[launchSession] Transitioning tab ${tabId} to connected state`);
+
+        void (async () => {
+          if (targetHost.auth_method === "password") {
+            try {
+              const pubKey = await invoke<string>("get_local_ssh_public_key");
+              
+              // CRITICAL: Only write key provisioning command to remote shell if we are NOT inside a tmux session.
+              // Writing shell commands to an active tmux session corrupts the screen and clutters the active pane.
+              if (mode !== "tmux") {
+                console.log("[launchSession] Provisioning local SSH public key on remote host shell...");
+                const escapedPubKey = pubKey.replace(/'/g, "'\\''");
+                const remoteCommand = `mkdir -p ~/.ssh && chmod 700 ~/.ssh && grep -qF '${escapedPubKey}' ~/.ssh/authorized_keys 2>/dev/null || echo '${escapedPubKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys\n`;
+                setTimeout(() => {
+                  void ptyWrite(sid, remoteCommand);
+                }, 300);
+              } else {
+                console.log("[launchSession] Active tmux mode; skipping key provisioning shell command to avoid PTY corruption.");
+                setTimeout(() => {
+                  setMousePolicy("tmux");
+                }, 300);
+              }
+            } catch (e) {
+              console.warn("[launchSession] SSH key auto-provisioning skipped:", e);
+            }
+          } else {
+            if (mode === "tmux") {
+              setTimeout(() => {
+                setMousePolicy("tmux");
+              }, 300);
+            }
+          }
+
+          let nextLayout = updateLayoutPty(currentTab.layout!, paneId, sid);
+          if (mode === "tmux") {
+            const identity = await resolveTmuxIdentity();
+            nextLayout = updateLayoutTmuxIdentity(nextLayout, paneId, identity);
+          }
+          updateTab({
+            id: tabId,
+            patch: { layout: nextLayout, state: "connected" },
+          });
+        })();
+      };
+
+      const channel = new Channel<PtyEvent>();
+      channel.onmessage = (evt) => {
+        if (evt.kind === "data") {
+          const handle = termHandlesRef.current.get(paneId);
+          handle?.write(evt.data);
+
+          if (!isLocalConnection) {
+            const currentTab = tabsRef.current.find((t) => t.id === tabId);
+            if (currentTab?.state !== "connected") {
+              ptyDataBuffer += evt.data;
+              if (ptyDataBuffer.length > 512) {
+                ptyDataBuffer = ptyDataBuffer.slice(ptyDataBuffer.length - 512);
+              }
+
+              // Strip ANSI escape sequences to ensure reliable prompt detection
+              const stripAnsi = (str: string) =>
+                str.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+
+              const cleanBuffer = stripAnsi(ptyDataBuffer);
+              const lowerClean = cleanBuffer.toLowerCase();
+              const trimmedClean = lowerClean.trim();
+
+              const isPrompt =
+                trimmedClean.endsWith("password:") ||
+                trimmedClean.endsWith("passphrase:") ||
+                (trimmedClean.includes("password") && trimmedClean.endsWith("':")) ||
+                (trimmedClean.includes("passphrase for key") && trimmedClean.endsWith(":")) ||
+                lowerClean.includes("are you sure you want to continue connecting");
+
+              const hasAuthFailure =
+                lowerClean.includes("permission denied") ||
+                lowerClean.includes("verification failed") ||
+                lowerClean.includes("please try again") ||
+                lowerClean.includes("incorrect passphrase") ||
+                lowerClean.includes("try again") ||
+                lowerClean.includes("login incorrect");
+
+              const isSuccess =
+                lowerClean.includes("last login:") ||
+                lowerClean.includes("welcome to") ||
+                lowerClean.includes("successful login") ||
+                lowerClean.includes("authenticated") ||
+                lowerClean.includes("microsoft windows") ||
+                /[\$#%>]\s*$/.test(trimmedClean) ||
+                evt.data.includes("\x1b[?1049h") ||
+                ptyDataBuffer.toLowerCase().includes("\x1b[?1049h") ||
+                lowerClean.includes("tmux");
+
+              if (isPrompt) {
+                if (!seenInteractivePrompt) {
+                  console.log(`[launchSession] Interactive prompt detected in PTY stream`);
+                }
+                seenInteractivePrompt = true;
+                cleanUpTimer();
+              } else if (hasAuthFailure) {
+                cleanUpTimer();
+              } else {
+                if (activeSessionId) {
+                  if (isSuccess) {
+                    transitionToConnected(activeSessionId);
+                  } else if (seenInteractivePrompt && !isPrompt && !hasAuthFailure) {
+                    cleanUpTimer();
+                    connectionTimer = setTimeout(() => {
+                      if (activeSessionId) {
+                        transitionToConnected(activeSessionId);
+                      }
+                    }, 2000);
+                  }
+                }
+              }
+            }
+          }
+
+         } else if (evt.kind === "fingerprint") {
+          cleanUpTimer();
+          seenInteractivePrompt = true;
+          setFingerprintReq({
+            host: targetHost.address,
+            fingerprintBlock: evt.challenge,
+            resolve: (accept) => {
+              if (accept) {
+                if (activeSessionId) {
+                  void ptyWrite(activeSessionId, "yes\n");
+                }
+              } else {
+                if (activeSessionId) {
+                  void ptyKill(activeSessionId);
+                }
+                const tab = tabs.find((t) => t.id === tabId);
+                if (tab && tab.layout) {
+                  const nextLayout = updateLayoutPty(tab.layout, paneId, null);
+                  updateTab({
+                    id: tabId,
+                    patch: {
+                      layout: nextLayout,
+                      state: "closed",
+                      bannerMessage: "SSH connection rejected by user.",
+                    },
+                  });
+                }
+              }
+              setFingerprintReq(null);
+            },
+          });
+        } else if (evt.kind === "exit") {
+          cleanUpTimer();
+          const binding = bindingsRef.current.get(paneId);
+          bindingsRef.current.delete(paneId);
+
+          // Remove the ptyId from the layout node
+          const tab = tabs.find((t) => t.id === tabId);
+          if (tab && tab.layout) {
+            const nextLayout = updateLayoutPty(tab.layout, paneId, null);
+            const isError255 = evt.code === 255;
+            updateTab({
+              id: tabId,
+              patch: {
+                layout: nextLayout,
+                state: isError255 ? "error" : (binding?.kind === "tmux" ? "warning" : "closed"),
+                bannerMessage: isError255
+                  ? `SSH connection failed (code 255).`
+                  : (binding?.kind === "tmux" ? `tmux session ended (code ${evt.code ?? "?"}).` : undefined),
+              },
+            });
+          }
+
+          if (binding) {
+            if (evt.code !== 0 && targetHost && targetHost.auth_method !== "local") {
+              if (evt.code === 255) {
+                const lower = ptyDataBuffer.toLowerCase();
+                const isKeyPermError =
+                  targetHost.key_path &&
+                  (lower.includes("unprotected private key") ||
+                    lower.includes("bad permissions") ||
+                    lower.includes("permissions") ||
+                    lower.includes("accessible by others"));
+
+                if (isKeyPermError) {
+                  updateTab({
+                    id: tabId,
+                    patch: {
+                      state: "error",
+                       bannerMessage: `SSH connection failed (code 255) because your private key file (${targetHost.key_path!.split(/[/\\]/).pop()}) is unprotected and ignored by SSH.`,
+                    },
+                  });
+                } else {
+                  updateTab({
+                    id: tabId,
+                    patch: {
+                      state: "error",
+                      bannerMessage: `SSH connection failed (code 255). Please check your SSH credentials, ssh-agent status, or key permissions.`,
+                    },
+                  });
+                }
+                return;
+              }
+
+              if (binding.kind === "tmux") {
+                setDisconnectedPanes((prev) => {
+                  const next = new Map(prev);
+                  next.set(paneId, {
+                    countdown: 5,
+                    retryCount: 0,
+                    bannerMessage: `Remote tmux session disconnected abnormally (code ${evt.code ?? "unknown"}). Retrying to recover...`,
+                  });
+                  return next;
+                });
+              }
+            } else {
+              setFallbackReq({
+                tabId,
+                sessionName: targetProfile.tmux_session_name,
+                exitCode: evt.code,
+              });
+            }
+          }
+        }
+      };
+
+      const handle = termHandlesRef.current.get(paneId);
+      const cols = handle?.cols() ?? 80;
+      const rows = handle?.rows() ?? 24;
+
+      try {
+        let sid: string;
+        if (mode === "raw" || mode === "install-local") {
+          sid = await ptySpawnLocal({
+            shell: undefined,
+            cwd: undefined,
+            cols,
+            rows,
+            channel,
+          });
+        } else if (mode === "ssh-raw") {
+          const savedPw =
+            targetHost.auth_method === "password"
+              ? (await secretsGet(hostAccount(targetHost.id))) || undefined
+              : undefined;
+          sid = await ptySpawnSshTmux({
+            ...remoteSshArgs(targetHost),
+            tmuxSession: undefined,
+            tmuxWindow: undefined,
+            password: savedPw,
+            detachOthers: targetHost.detach_other_clients,
+            cols,
+            rows,
+            channel,
+          });
+        } else if (targetHost.auth_method === "local") {
+          sid = await ptySpawnTmuxLocal({
+            session: targetProfile.tmux_session_name,
+            detachOthers: targetHost.detach_other_clients,
+            window: targetProfile.tmux_window_target,
+            socketPath: targetHost.tmux_socket_path,
+            tmuxBinary: targetHost.custom_tmux_binary,
+            cols,
+            rows,
+            channel,
+            mouseMode: true,
+          });
+        } else {
+          const savedPw =
+            targetHost.auth_method === "password"
+              ? (await secretsGet(hostAccount(targetHost.id))) || undefined
+              : undefined;
+          sid = await ptySpawnSshTmux({
+            ...remoteSshArgs(targetHost),
+            tmuxSession: targetProfile.tmux_session_name,
+            tmuxWindow: targetProfile.tmux_window_target,
+            password: savedPw,
+            detachOthers: targetHost.detach_other_clients,
+            cols,
+            rows,
+            channel,
+            mouseMode: true,
+          });
+        }
+        
+        activeSessionId = sid;
+        bindingsRef.current.set(paneId, {
+          tabId,
+          paneId,
+          sessionId: sid,
+          kind: (mode === "raw" || mode === "install-local" || mode === "ssh-raw") ? "raw" : "tmux",
+        });
+
+        // Trigger a re-render so that localEcho evaluates to false since sessionId is now available in bindingsRef
+        updateTab({
+          id: tabId,
+          patch: { state: "connecting" },
+        });
+
+        if (isLocalConnection) {
+          transitionToConnected(sid);
+        } else {
+          // Set a 1.5 second safety timer to auto-connect if no prompt is seen
+          connectionTimer = setTimeout(() => {
+            if (!seenInteractivePrompt) {
+              console.log(`[launchSession] No prompt seen after 1.5s, auto-connecting`);
+              transitionToConnected(sid);
+            }
+          }, 1500);
+        }
+
+        setViewMode("normal");
+
+        if (mode === "install-local") {
+          setTimeout(() => {
+            void ptyWrite(sid, "brew install tmux\n");
+          }, 500);
+        }
+
+        return true;
+      } catch (err) {
+        cleanUpTimer();
+        console.error("session launch failed", err);
+        updateTab({
+          id: tabId,
+          patch: { state: "error", bannerMessage: String(err) },
+        });
+        return false;
       }
-
-      return true;
-    } catch (err) {
-      console.error("session launch failed", err);
-      updateTab({
-        id: tabId,
-        patch: { state: "error", bannerMessage: String(err) },
-      });
-      return false;
+    } finally {
+      launchingPanesRef.current.delete(paneId);
     }
   };
 
@@ -981,7 +1249,7 @@ export default function App() {
     });
 
     if (newPaneId) {
-      void launchSession(activeTab.id, newPaneId, isTmux ? "tmux" : "raw");
+      void launchSession(activeTab.id, newPaneId, isTmux ? "tmux" : (activeHost?.auth_method === "local" ? "raw" : "ssh-raw"));
     }
   };
 
@@ -1363,6 +1631,98 @@ export default function App() {
     }
   };
 
+  const handlePaneSelect = (paneId: string) => {
+    pendingPaneFocusRef.current = null;
+    const binding = bindingsRef.current.get(paneId);
+    if (binding?.kind === "tmux" && supportsNativeTmuxCommands(activeHost)) {
+      void executeTmuxCommand("select", paneId);
+    }
+  };
+
+  const handleSelectPane = async (
+    sessionName: string,
+    windowName: string,
+    paneId: string,
+    _paneIndex: number
+  ) => {
+    if (!activeTab || !activeProfile || !activeHost) return;
+
+    const isSessionActive = activeProfile.tmux_session_name === sessionName;
+    const isWindowActive = isSessionActive && activeProfile.tmux_window_target === windowName;
+
+    // 1. If not connected to this session or window, attach to it!
+    if (!isSessionActive || !isWindowActive) {
+      pendingPaneFocusRef.current = { sessionName, windowName, paneId };
+      await handleAttachToTarget(sessionName, windowName);
+      return;
+    } else {
+      pendingPaneFocusRef.current = null;
+    }
+
+    // 2. If it is already the active window and session, let's see if this pane is in our ReMux layout.
+    if (activeTab.layout) {
+      const findLayoutPaneIdByTmuxPaneId = (node: PaneLayout, targetPaneId: string): string | null => {
+        if (node.type === "leaf") {
+          return node.tmuxIdentity?.paneId === targetPaneId ? node.id : null;
+        }
+        for (const child of node.children) {
+          const found = findLayoutPaneIdByTmuxPaneId(child, targetPaneId);
+          if (found) return found;
+        }
+        return null;
+      };
+
+      const matchingPaneId = findLayoutPaneIdByTmuxPaneId(activeTab.layout, paneId);
+      if (matchingPaneId) {
+        // Already active? Avoid useless re-renders.
+        if (activeTab.activePaneId !== matchingPaneId) {
+          updateTab({
+            id: activeTab.id,
+            patch: { activePaneId: matchingPaneId },
+          });
+        }
+
+        // Focus the terminal handle!
+        const handle = termHandlesRef.current.get(matchingPaneId);
+        if (handle) {
+          handle.focus();
+        }
+
+        // Also trigger native tmux select-pane command if supported out-of-band
+        if (supportsNativeTmuxCommands(activeHost)) {
+          void executeTmuxCommand("select", matchingPaneId);
+        }
+      } else {
+        // If it is not in our ReMux layout (meaning it's a native split inside a single ReMux pane),
+        // we can trigger native tmux select-pane command out-of-band for the active pane.
+        if (supportsNativeTmuxCommands(activeHost)) {
+          try {
+            if (activeHost.auth_method === "local") {
+              await tmuxSelectLocalPane({
+                target: paneId,
+                binary: activeHost.custom_tmux_binary || undefined,
+                socketPath: activeHost.tmux_socket_path || undefined,
+              });
+            } else {
+              await tmuxSelectRemotePane({
+                ...remoteSshArgs(activeHost),
+                target: paneId,
+                tmuxBinary: activeHost.custom_tmux_binary || undefined,
+                socketPath: activeHost.tmux_socket_path || undefined,
+              });
+            }
+            // Trigger background refresh of layout and pane list
+            window.setTimeout(() => {
+              void refreshActiveTmuxState();
+            }, 100);
+          } catch (err) {
+            console.warn("Failed to select remote pane out-of-band", err);
+          }
+        }
+      }
+    }
+  };
+
   // Helper to gather all unconnected (ptyId === null) leaf IDs in a tree
   const collectUnconnectedLeafIds = (node: PaneLayout): string[] => {
     if (node.type === "leaf") {
@@ -1383,6 +1743,24 @@ export default function App() {
     }
     return null;
   };
+
+  // 4. Saved password detection for active host
+  useEffect(() => {
+    const checkPassword = async () => {
+      if (activeHost && activeHost.auth_method === "password") {
+        try {
+          const pw = await secretsGet(hostAccount(activeHost.id));
+          setHasSavedPassword(!!pw);
+        } catch (e) {
+          console.warn("Failed to check saved password", e);
+          setHasSavedPassword(false);
+        }
+      } else {
+        setHasSavedPassword(false);
+      }
+    };
+    void checkPassword();
+  }, [activeHost]);
 
   // 3. Native Window Title auto-sync
   useEffect(() => {
@@ -1421,6 +1799,10 @@ export default function App() {
   useEffect(() => {
     if (!activeTab || activeTab.state !== "connected" || !activeHost || hierarchyInterval === 0) return;
 
+    const activePaneId = activeTab.activePaneId;
+    const binding = activePaneId ? bindingsRef.current.get(activePaneId) : null;
+    if (binding?.kind !== "tmux") return;
+
     const pollHierarchy = async () => {
       try {
         const tree = await tmuxProbeHierarchy({
@@ -1451,7 +1833,7 @@ export default function App() {
     }, hierarchyInterval);
 
     return () => clearInterval(timer);
-  }, [activeTab?.id, activeTab?.state, activeHost, setHierarchyRecord, hierarchyInterval]);
+  }, [activeTab?.id, activeTab?.activePaneId, activeTab?.state, activeHost, setHierarchyRecord, hierarchyInterval, hasSavedPassword]);
 
   // 2. Telemetry polling: Process memory RSS size, child process PID details, and heartbeat RTT
   useEffect(() => {
@@ -1464,6 +1846,10 @@ export default function App() {
       telemetryInterval === 0
     )
       return;
+
+    const activePaneId = activeTab.activePaneId;
+    const binding = activePaneId ? bindingsRef.current.get(activePaneId) : null;
+    if (binding?.kind !== "tmux") return;
 
     const pollDiagnostics = async () => {
       const leafNode = findLeafNode(activeTab.layout!, activeTab.activePaneId!);
@@ -1548,6 +1934,7 @@ export default function App() {
     updateTab,
     setDiagnostics,
     telemetryInterval,
+    hasSavedPassword,
   ]);
 
   // 2.1 Polling tmux pane identities for real-time StatusLine and Pane Headers
@@ -1561,6 +1948,10 @@ export default function App() {
     ) {
       return;
     }
+
+    const activePaneId = activeTab.activePaneId;
+    const binding = activePaneId ? bindingsRef.current.get(activePaneId) : null;
+    if (binding?.kind !== "tmux") return;
 
     const pollPaneIdentities = async () => {
       try {
@@ -1609,11 +2000,13 @@ export default function App() {
     return () => clearInterval(timer);
   }, [
     activeTab?.id,
+    activeTab?.activePaneId,
     activeTab?.state,
     activeHost,
     activeProfile,
     telemetryInterval,
     refreshPaneIdentities,
+    hasSavedPassword,
   ]);
 
   // 2.2 Focus synchronization: sync REMUX active pane to native tmux pane
@@ -1634,11 +2027,66 @@ export default function App() {
     }
   }, [activeTab?.activePaneId, activeTab?.state, activeHost, activeProfile]);
 
+  // 2.3 Auto-focus pending pane across session/window connections
+  useEffect(() => {
+    if (!activeTab || activeTab.state !== "connected" || !activeTab.layout) return;
+    if (pendingPaneFocusRef.current) {
+      const { sessionName, windowName, paneId } = pendingPaneFocusRef.current;
+      
+      if (
+        activeProfile?.tmux_session_name === sessionName &&
+        activeProfile?.tmux_window_target === windowName
+      ) {
+        const findMatchingLeafId = (node: PaneLayout): string | null => {
+          if (node.type === "leaf") {
+            return node.tmuxIdentity?.paneId === paneId ? node.id : null;
+          }
+          for (const child of node.children) {
+            const found = findMatchingLeafId(child);
+            if (found) return found;
+          }
+          return null;
+        };
+
+        const matchingReMuxPaneId = findMatchingLeafId(activeTab.layout);
+        if (matchingReMuxPaneId) {
+          pendingPaneFocusRef.current = null; // Clear pending focus
+          
+          if (activeTab.activePaneId !== matchingReMuxPaneId) {
+            updateTab({
+              id: activeTab.id,
+              patch: { activePaneId: matchingReMuxPaneId },
+            });
+          }
+          const handle = termHandlesRef.current.get(matchingReMuxPaneId);
+          if (handle) {
+            handle.focus();
+          }
+          if (supportsNativeTmuxCommands(activeHost)) {
+            void executeTmuxCommand("select", matchingReMuxPaneId);
+          }
+        }
+      }
+    }
+  }, [activeTab?.state, activeTab?.layout, activeProfile, activeHost]);
+
   useEffect(() => {
     if (!activeTab || activeTab.state !== "connected" || !activeHost || !activeProfile) return;
 
+    const activePaneId = activeTab.activePaneId;
+    const binding = activePaneId ? bindingsRef.current.get(activePaneId) : null;
+    if (binding?.kind !== "tmux") return;
+
     const target = activeProfile.tmux_session_name;
     if (!target) return;
+
+    // Strict infinite-loop guard: only execute out-of-band mouse set command
+    // when the mouse policy has genuinely changed for this specific tab.
+    const prev = prevMousePolicyRef.current.get(activeTab.id);
+    if (prev === mousePolicy) {
+      return;
+    }
+    prevMousePolicyRef.current.set(activeTab.id, mousePolicy);
 
     const enabled = mousePolicy === "tmux";
     const syncMousePolicy = async () => {
@@ -1651,13 +2099,14 @@ export default function App() {
             socketPath: activeHost.tmux_socket_path || undefined,
           });
         } else if (!supportsNativeTmuxCommands(activeHost)) {
-          if (!enabled) return;
-          setMousePolicy("remux");
+          // Password-auth host: we cannot run native out-of-band commands to enable/disable tmux mouse mode.
+          // But we STILL allow the user to use 'tmux' pass-through mode if they enable it in tmux manually!
           updateTab({
             id: activeTab.id,
             patch: {
-              bannerMessage:
-                `${nativeTmuxDisabledReasonForActiveHost("Mouse handoff") || "Mouse handoff is unavailable for this host."} REMUX mouse handling was restored.`,
+              bannerMessage: enabled
+                ? "Mouse pass-through enabled. Since native mouse sync is unavailable on this host, please ensure 'set -g mouse on' is enabled in your remote tmux session."
+                : undefined,
             },
           });
         } else {
@@ -1671,15 +2120,11 @@ export default function App() {
         }
       } catch (err) {
         console.warn("Failed to sync tmux mouse policy", err);
-        updateTab({
-          id: activeTab.id,
-          patch: { bannerMessage: `tmux mouse sync failed: ${String(err)}` },
-        });
       }
     };
 
     void syncMousePolicy();
-  }, [activeTab?.id, activeTab?.state, activeHost, activeProfile, mousePolicy, setMousePolicy]);
+  }, [activeTab?.id, activeHost, activeProfile, mousePolicy]);
 
   const handleAttachToTarget = async (sessionName: string, windowName?: string) => {
     if (!activeTab || !activeProfile) return;
@@ -1743,15 +2188,6 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeHost, activeProfile, activeTab?.id, activeTab?.state]);
 
-  // Kill PTYs on component unmount
-  useEffect(() => {
-    return () => {
-      for (const b of bindingsRef.current.values()) {
-        void ptyKill(b.sessionId);
-      }
-      bindingsRef.current.clear();
-    };
-  }, []);
 
   useEffect(() => {
     if (!activeTab) return;
@@ -1838,6 +2274,7 @@ export default function App() {
           onNewWindow={handleNewWindow}
           onKillWindow={handleKillWindow}
           onRenameWindow={handleRenameWindowDirect}
+          onSelectPane={handleSelectPane}
         />
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100%", position: "relative" }}>
           {activeTab?.bannerMessage && (
@@ -1848,49 +2285,105 @@ export default function App() {
               <span style={{ flex: 1, paddingRight: "12px" }}>
                 {activeTab.bannerMessage}
               </span>
-              {activeTab.state === "error" &&
-                activeHost &&
-                activeHost.auth_method !== "local" &&
-                !activeHost.skip_host_key_check &&
-                activeTab.bannerMessage.includes("code 255") && (
-                  <button
-                    className="icon-btn"
-                    style={{
-                      width: "auto",
-                      height: "auto",
-                      padding: "6px 12px",
-                      fontSize: "11px",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "4px",
-                      border: "1px solid var(--accent-dim)",
-                      background: "rgba(106, 169, 255, 0.1)",
-                      color: "var(--accent)",
-                      flexShrink: 0,
-                    }}
-                    onClick={async () => {
-                      const updatedHost = {
-                        ...activeHost,
-                        skip_host_key_check: true,
-                      };
-                      await updateHost(updatedHost);
-                      
-                      const paneId = activeTab.activePaneId;
-                      if (paneId) {
-                        updateTab({
-                          id: activeTab.id,
-                          patch: {
-                            state: "connecting",
-                            bannerMessage: "Retrying connection with trusted host...",
-                          },
-                        });
-                        void launchSession(activeTab.id, paneId, "tmux");
-                      }
-                    }}
-                  >
-                    Trust Host &amp; Retry
-                  </button>
-                )}
+              {activeTab.state === "error" && activeHost && activeHost.auth_method !== "local" && (
+                <div style={{ display: "flex", gap: "8px", flexShrink: 0 }}>
+                  {!activeHost.skip_host_key_check && activeTab.bannerMessage.includes("code 255") && (
+                    <button
+                      className="icon-btn"
+                      style={{
+                        width: "auto",
+                        height: "auto",
+                        padding: "6px 12px",
+                        fontSize: "11px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        border: "1px solid var(--accent-dim)",
+                        background: "rgba(106, 169, 255, 0.1)",
+                        color: "var(--accent)",
+                        flexShrink: 0,
+                      }}
+                      onClick={async () => {
+                        const updatedHost = {
+                          ...activeHost,
+                          skip_host_key_check: true,
+                        };
+                        await updateHost(updatedHost);
+                        
+                        const paneId = activeTab.activePaneId;
+                        if (paneId) {
+                          updateTab({
+                            id: activeTab.id,
+                            patch: {
+                              state: "connecting",
+                              bannerMessage: "Retrying connection with trusted host...",
+                            },
+                          });
+                          void launchSession(activeTab.id, paneId, "tmux");
+                        }
+                      }}
+                    >
+                      Trust Host &amp; Retry
+                    </button>
+                  )}
+                  {activeHost.key_path &&
+                    (activeTab.bannerMessage.includes("unprotected") ||
+                      activeTab.bannerMessage.includes("permissions") ||
+                      activeTab.bannerMessage.includes("ignored")) && (
+                      <button
+                        className="icon-btn"
+                        style={{
+                          width: "auto",
+                          height: "auto",
+                          padding: "6px 12px",
+                          fontSize: "11px",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          border: "1px solid var(--accent-dim)",
+                          background: "rgba(106, 169, 255, 0.1)",
+                          color: "var(--accent)",
+                          flexShrink: 0,
+                        }}
+                        onClick={async () => {
+                          try {
+                            updateTab({
+                              id: activeTab.id,
+                              patch: {
+                                state: "connecting",
+                                bannerMessage: "Fixing key permissions...",
+                              },
+                            });
+                            await invoke("fix_key_permissions", { keyPath: activeHost.key_path! });
+                            
+                            const paneId = activeTab.activePaneId;
+                            if (paneId) {
+                              updateTab({
+                                id: activeTab.id,
+                                patch: {
+                                  state: "connecting",
+                                  bannerMessage: "Retrying connection...",
+                                },
+                              });
+                              void launchSession(activeTab.id, paneId, "tmux");
+                            }
+                          } catch (err) {
+                            console.error("Failed to fix key permissions:", err);
+                            updateTab({
+                              id: activeTab.id,
+                              patch: {
+                                state: "error",
+                                bannerMessage: `Failed to fix key permissions: ${String(err)}`,
+                              },
+                            });
+                          }
+                        }}
+                      >
+                        Fix Key Permissions &amp; Retry
+                      </button>
+                    )}
+                </div>
+              )}
             </div>
           )}
           {activeTab?.missingTmuxRemote && (
@@ -1964,35 +2457,56 @@ export default function App() {
               )}
             </div>
           )}
-          {hasActiveSession && activeTab.layout && (
-            <TerminalGrid
-              tabId={activeTab.id}
-              layout={activeTab.layout}
-              activePaneId={activeTab.activePaneId}
-              termHandlesRef={termHandlesRef}
-              onInput={onTerminalInput}
-              onResize={onTerminalResize}
-              onDoubleClick={onDoubleClick}
-              onPasteRequested={(req) => setPendingPaste(req)}
-              onPaneCreated={(paneId) => {
-                void launchSession(activeTab.id, paneId, "tmux");
-              }}
-              localEcho={
-                !activeTab.activePaneId || 
-                !bindingsRef.current.get(activeTab.activePaneId)?.sessionId
-              }
-              disconnectedPanes={disconnectedPanes}
-              onRetryPane={handleRetryPane}
-              onClosePane={handleClosePane}
-              onSplitPane={handleSplitPane}
-              onApplyLayoutPreset={handleApplyLayoutPreset}
-              onRenameWindow={handleRenameWindow}
-              onRenamePane={handleRenamePane}
-              nativeRenameDisabledReason={
-                nativeTmuxDisabledReason(activeHost, "Native tmux rename")
-              }
-            />
-          )}
+          {tabs.map((tab) => {
+            const isTabActive = tab.id === activeTab?.id;
+            const profile = profiles.find((p) => p.id === tab.profileId);
+            const host = profile ? hosts.find((h) => h.id === profile.host_id) : null;
+            return (
+              <div
+                key={tab.id}
+                style={{
+                  display: isTabActive ? "flex" : "none",
+                  flexDirection: "column",
+                  flex: 1,
+                  minWidth: 0,
+                  height: "100%",
+                }}
+              >
+                {tab.layout && (
+                  <TerminalGrid
+                    tabId={tab.id}
+                    layout={tab.layout}
+                    activePaneId={tab.activePaneId}
+                    termHandlesRef={termHandlesRef}
+                    onInput={onTerminalInput}
+                    onResize={onTerminalResize}
+                    onDoubleClick={onDoubleClick}
+                    onPasteRequested={(req) => setPendingPaste(req)}
+                    onPaneCreated={(paneId) => {
+                      void launchSession(tab.id, paneId, "tmux");
+                    }}
+                    localEcho={
+                      tab.state !== "connected" && (
+                        !tab.activePaneId || 
+                        !bindingsRef.current.get(tab.activePaneId)?.sessionId
+                      )
+                    }
+                    disconnectedPanes={disconnectedPanes}
+                    onRetryPane={handleRetryPane}
+                    onClosePane={handleClosePane}
+                    onSplitPane={handleSplitPane}
+                    onApplyLayoutPreset={handleApplyLayoutPreset}
+                    onRenameWindow={handleRenameWindow}
+                    onRenamePane={handleRenamePane}
+                    nativeRenameDisabledReason={
+                      nativeTmuxDisabledReason(host, "Native tmux rename")
+                    }
+                    onPaneSelect={handlePaneSelect}
+                  />
+                )}
+              </div>
+            );
+          })}
         </div>
         <AppearancePanel />
       </main>
@@ -2018,6 +2532,14 @@ export default function App() {
           onReject={() => fingerprintReq.resolve(false)}
         />
       )}
+      {keyPermissionReq && (
+        <KeyPermissionsModal
+          keyPath={keyPermissionReq.keyPath}
+          onFix={() => keyPermissionReq.resolve("fix")}
+          onSkip={() => keyPermissionReq.resolve("skip")}
+          onCancel={() => keyPermissionReq.resolve("cancel")}
+        />
+      )}
       {fallbackReq && (
         <TmuxFallbackModal
           sessionName={fallbackReq.sessionName}
@@ -2034,7 +2556,7 @@ export default function App() {
             // Spawn raw session for the active leaf pane
             const currentTab = tabs.find((t) => t.id === tabId);
             if (currentTab?.activePaneId) {
-              void launchSession(tabId, currentTab.activePaneId, "raw");
+              void launchSession(tabId, currentTab.activePaneId, activeHost?.auth_method === "local" ? "raw" : "ssh-raw");
             }
           }}
           onClose={() => {

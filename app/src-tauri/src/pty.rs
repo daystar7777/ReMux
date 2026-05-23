@@ -155,6 +155,7 @@ impl PtyManager {
                     Ok(0) => break,
                     Ok(n) => {
                         let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+                        println!("[PTY READ] {:?}", chunk);
                         if channel_for_reader
                             .send(PtyEvent::Data { data: chunk.clone() })
                             .is_err()
@@ -175,8 +176,10 @@ impl PtyManager {
                         if check_tail {
                             tail.push_str(&chunk);
                             if tail.len() > 512 {
-                                let drop_n = tail.len() - 512;
-                                tail.drain(..drop_n);
+                                let keep_start = tail.len() - 512;
+                                if let Some(idx) = tail.char_indices().map(|(i, _)| i).find(|&i| i >= keep_start) {
+                                    tail.drain(..idx);
+                                }
                             }
 
                             if !fingerprint_detected && looks_like_fingerprint_prompt(&tail) {
@@ -188,15 +191,25 @@ impl PtyManager {
                             }
 
                             if let Some(pw) = auto_password.as_deref() {
-                                if !password_used_for_reader.load(Ordering::Relaxed)
-                                    && looks_like_password_prompt(&tail)
-                                {
-                                    if let Ok(mut w) = writer_for_reader.lock() {
-                                        let _ = w.write_all(pw.as_bytes());
-                                        let _ = w.write_all(b"\n");
-                                        let _ = w.flush();
-                                    }
+                                let used = password_used_for_reader.load(Ordering::Relaxed);
+                                let is_prompt = looks_like_password_prompt(&tail);
+                                if !tail.is_empty() {
+                                    println!("[PTY WATCHER] used={}, is_prompt={}, tail={:?}", used, is_prompt, tail);
+                                }
+                                if !used && is_prompt {
                                     password_used_for_reader.store(true, Ordering::Relaxed);
+                                    let pw_clone = pw.to_string();
+                                    let writer_clone = writer_for_reader.clone();
+                                    thread::spawn(move || {
+                                        // Sleep in a separate thread to avoid blocking the critical PTY Reader loop
+                                        thread::sleep(std::time::Duration::from_millis(300));
+                                        if let Ok(mut w) = writer_clone.lock() {
+                                            println!("[PTY WATCHER] [BG] Writing password auto-inject!");
+                                            let _ = w.write_all(pw_clone.as_bytes());
+                                            let _ = w.write_all(b"\n");
+                                            let _ = w.flush();
+                                        }
+                                    });
                                     tail.clear();
                                 }
                             }
@@ -222,9 +235,12 @@ impl PtyManager {
     pub fn write(&self, id: &str, data: &str) -> Result<()> {
         let sessions = self.sessions.lock().unwrap();
         let s = sessions.get(id).context("write: unknown session id")?;
-        // Disarm password watcher on first user interaction
-        s.password_used.store(true, Ordering::Relaxed);
+        // Disarm password watcher on first user interaction (excluding automated fingerprint approval)
+        if data != "yes\n" && data != "yes\r\n" && data != "yes\r" {
+            s.password_used.store(true, Ordering::Relaxed);
+        }
         let mut w = s.writer.lock().unwrap();
+        println!("[PTY WRITE] {:?}", data);
         w.write_all(data.as_bytes()).context("pty write")?;
         w.flush().ok();
         Ok(())

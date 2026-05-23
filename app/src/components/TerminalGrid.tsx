@@ -2,7 +2,7 @@ import React from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Terminal, type PasteRequest, type TerminalHandle } from "./Terminal";
 import { openTabsAtom, type PaneLayout, splitPaneAction, closePaneAction, viewModeAtom, applyPresetAction } from "../state/atoms";
-import type { TmuxLayoutPreset } from "../lib/ipc";
+import { logDebug, type TmuxLayoutPreset } from "../lib/ipc";
 import { Columns, Pencil, Rows, Tag, X, LayoutGrid } from "lucide-react";
 import { RecoveryOverlay } from "./RecoveryOverlay";
 import {
@@ -30,6 +30,7 @@ interface TerminalGridProps {
   onRenameWindow?: (paneId: string) => void;
   onRenamePane?: (paneId: string) => void;
   nativeRenameDisabledReason?: string;
+  onPaneSelect?: (paneId: string) => void;
 }
 
 export const TerminalGrid: React.FC<TerminalGridProps> = ({
@@ -51,6 +52,7 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
   onRenameWindow,
   onRenamePane,
   nativeRenameDisabledReason,
+  onPaneSelect,
 }) => {
   const [tabs, setTabs] = useAtom(openTabsAtom);
   const splitPane = useSetAtom(splitPaneAction);
@@ -58,6 +60,15 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
   const applyPreset = useSetAtom(applyPresetAction);
   const viewMode = useAtomValue(viewModeAtom);
   const [showPresetDropdownId, setShowPresetDropdownId] = React.useState<string | null>(null);
+  const lastInteractionTimeRef = React.useRef<number>(0);
+  const lastInteractionPaneIdRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    if (activePaneId && typeof document !== "undefined") {
+      document.body.setAttribute("data-last-interaction-pane", activePaneId);
+      document.body.setAttribute("data-last-interaction-time", String(Date.now()));
+    }
+  }, [activePaneId]);
 
   const renderTmuxLayoutPreview = (node: TmuxLayoutNode, activeLayoutPaneId?: string): React.ReactNode => {
     if (node.type === "pane") {
@@ -88,6 +99,18 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
   };
 
   const selectPane = (paneId: string) => {
+    void logDebug(`[ReMux Debug] selectPane called for paneId: ${paneId}, activePaneId: ${activePaneId}`);
+    if (typeof document !== "undefined") {
+      document.body.setAttribute("data-last-interaction-pane", paneId);
+      document.body.setAttribute("data-last-interaction-time", String(Date.now()));
+    }
+    const activeTab = tabs.find((t) => t.id === tabId);
+    if (activeTab && activeTab.activePaneId === paneId) {
+      void logDebug("[ReMux Debug] Pane already active, returning early.");
+      return;
+    }
+    onPaneSelect?.(paneId);
+    void logDebug(`[ReMux Debug] Updating tabs state with activePaneId: ${paneId}`);
     setTabs(
       tabs.map((t) => {
         if (t.id === tabId) {
@@ -128,12 +151,44 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
           key={node.id}
           data-pane-id={node.id}
           className={`terminal-pane-wrapper ${isActive ? "active" : ""}`}
-          onClick={() => selectPane(node.id)}
+          onMouseDownCapture={(e) => {
+            void logDebug(`[ReMux Debug] onMouseDownCapture triggered on pane wrapper: ${node.id}`);
+            if (typeof document !== "undefined") {
+              document.body.setAttribute("data-last-interaction-pane", node.id);
+              document.body.setAttribute("data-last-interaction-time", String(Date.now()));
+            }
+            lastInteractionTimeRef.current = Date.now();
+            lastInteractionPaneIdRef.current = node.id;
+            selectPane(node.id);
+
+            // Coordinated header-click focus relay
+            const target = e.target as HTMLElement;
+            const isClickingInsideTerminal = target.closest(".terminal-host") !== null;
+            const isClickingInteractive = target.closest("button") !== null || 
+                                           target.closest("input") !== null || 
+                                           target.closest("select") !== null || 
+                                           target.closest("textarea") !== null || 
+                                           target.closest(".presets-dropdown") !== null;
+            
+            if (!isClickingInsideTerminal && !isClickingInteractive) {
+              const handle = termHandlesRef.current.get(node.id);
+              if (handle) {
+                setTimeout(() => handle.focus(), 0);
+              }
+            }
+          }}
+          onKeyDownCapture={() => {
+            if (typeof document !== "undefined") {
+              document.body.setAttribute("data-last-interaction-pane", node.id);
+              document.body.setAttribute("data-last-interaction-time", String(Date.now()));
+            }
+            lastInteractionTimeRef.current = Date.now();
+            lastInteractionPaneIdRef.current = node.id;
+          }}
           style={{
             flex: 1,
             display: shouldHide ? "none" : "flex",
             flexDirection: "column",
-            border: "2px solid transparent",
             borderRadius: "8px",
             overflow: "hidden",
             boxSizing: "border-box",
@@ -453,9 +508,29 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
               if (el) termHandlesRef.current.set(node.id, el);
               else termHandlesRef.current.delete(node.id);
             }}
-            localEcho={localEcho}
+            isActive={isActive}
+            localEcho={localEcho && !node.ptyId}
             onInput={(data) => onInput(node.id, data)}
             onResize={(cols, rows) => onResize(node.id, cols, rows)}
+            onFocus={() => {
+              const now = Date.now();
+              const elapsed = now - lastInteractionTimeRef.current;
+              const isTargetMatch = lastInteractionPaneIdRef.current === node.id;
+              void logDebug(`[ReMux Debug] onFocus on pane ${node.id}. Elapsed: ${elapsed}ms, TargetMatch: ${isTargetMatch}, isActive: ${isActive}`);
+              if ((elapsed < 150 && isTargetMatch) || isActive) {
+                selectPane(node.id);
+              } else {
+                void logDebug(`[ReMux Debug] Ignored phantom focus event on pane ${node.id} to prevent physical hijacking. (Elapsed: ${elapsed}ms, TargetMatch: ${isTargetMatch})`);
+                const activeTab = tabs.find((t) => t.id === tabId);
+                if (activeTab && activeTab.activePaneId) {
+                  const activeHandle = termHandlesRef.current.get(activeTab.activePaneId);
+                  if (activeHandle) {
+                    void logDebug(`[ReMux Debug] Forcefully pulling physical focus back to the genuine active pane: ${activeTab.activePaneId}`);
+                    activeHandle.focus();
+                  }
+                }
+              }
+            }}
             onDoubleClick={() => onDoubleClick(node.id)}
             onPasteRequested={onPasteRequested}
           />
@@ -526,7 +601,15 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
   };
 
   return (
-    <div style={{ display: "flex", flex: 1, width: "100%", height: "100%", minWidth: 0, minHeight: 0 }}>
+    <div
+      onMouseDownCapture={() => {
+        lastInteractionTimeRef.current = Date.now();
+      }}
+      onKeyDownCapture={() => {
+        lastInteractionTimeRef.current = Date.now();
+      }}
+      style={{ display: "flex", flex: 1, width: "100%", height: "100%", minWidth: 0, minHeight: 0 }}
+    >
       {renderNode(layout)}
     </div>
   );

@@ -18,7 +18,6 @@ import {
 import {
   PASSWORD_REMOTE_COMMAND_CHANNEL_REASON,
   PASSWORD_REMOTE_INTERACTIVE_ONLY_LABEL,
-  nativeTmuxDisabledReason,
   supportsNativeTmuxCommands,
 } from "../lib/remotePolicy";
 import { summarize } from "../lib/clipboard";
@@ -79,10 +78,6 @@ export function StatusLine() {
   const paneDiag = tab?.activePaneId ? diagnostics[tab.activePaneId] : undefined;
   const nativeTmuxCommandsEnabled = supportsNativeTmuxCommands(host);
   const remoteInteractiveOnly = host ? !nativeTmuxCommandsEnabled : false;
-  const mouseDisabledReason = nativeTmuxDisabledReason(
-    host,
-    "Mouse handoff",
-  );
 
   const isBroadcast = tab ? !!broadcastRecord[tab.id] : false;
   const toggleBroadcast = () => {
@@ -266,26 +261,21 @@ export function StatusLine() {
       <span className="sep" />
       <button
         className="icon-btn"
-        disabled={remoteInteractiveOnly}
         style={{
           width: "auto",
           padding: "0 8px",
           fontSize: 11,
-          opacity: remoteInteractiveOnly ? 0.45 : 1,
         }}
         onClick={() => {
-          if (remoteInteractiveOnly) return;
           setMousePolicy(mousePolicy === "remux" ? "tmux" : "remux");
         }}
         title={
-          remoteInteractiveOnly
-            ? mouseDisabledReason
-            : mousePolicy === "remux"
+          mousePolicy === "remux"
             ? "REMUX handles mouse. Click to hand mouse events to tmux/remote."
             : "tmux/remote handles mouse. Click to take mouse back to REMUX."
         }
       >
-        <strong>mouse</strong>&nbsp;{remoteInteractiveOnly ? "REMUX*" : mousePolicy === "remux" ? "REMUX" : "tmux"}
+        <strong>mouse</strong>&nbsp;{mousePolicy === "remux" ? "REMUX" : "tmux"}
       </button>
       {locale && (
         <>

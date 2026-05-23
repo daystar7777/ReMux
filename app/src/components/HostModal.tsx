@@ -15,7 +15,7 @@ import { hostAccount, secretsGet, testConnection, type TestConnectionResult } fr
 interface HostModalProps {
   host?: Host;
   onClose: () => void;
-  onSave: (payload: { host: Host; password?: string | null }) => void;
+  onSave: (payload: { host: Host; password?: string | null }) => Promise<void>;
 }
 
 interface ResolvedSshHost {
@@ -29,6 +29,7 @@ interface ResolvedSshHost {
 }
 
 export function HostModal({ host, onClose, onSave }: HostModalProps) {
+  const [hostId] = useState(() => host?.id || newHostId());
   const [label, setLabel] = useState("");
   const [address, setAddress] = useState("");
   const [port, setPort] = useState(22);
@@ -169,7 +170,7 @@ export function HostModal({ host, onClose, onSave }: HostModalProps) {
       return null;
     }
     return {
-      id: host?.id || newHostId(),
+      id: hostId,
       label: label.trim(),
       address: authMethod === "local" ? "127.0.0.1" : address.trim(),
       port: authMethod === "local" ? 0 : port,
@@ -188,10 +189,17 @@ export function HostModal({ host, onClose, onSave }: HostModalProps) {
     };
   };
 
-  const commitSave = (savePassword: boolean) => {
+  const [saving, setSaving] = useState(false);
+
+  const commitSave = async (savePassword: boolean) => {
+    if (saving) return;
     setError(null);
+    setSaving(true);
     const built = buildSavedHost();
-    if (!built) return;
+    if (!built) {
+      setSaving(false);
+      return;
+    }
     let passwordPayload: string | null | undefined = undefined;
     if (authMethod === "password") {
       if (savePassword) {
@@ -201,12 +209,20 @@ export function HostModal({ host, onClose, onSave }: HostModalProps) {
         passwordPayload = undefined;
       }
     }
-    onSave({ host: built, password: passwordPayload });
+    try {
+      await onSave({ host: built, password: passwordPayload });
+      onClose();
+    } catch (err: any) {
+      console.error("Host save failed", err);
+      setError(err?.toString() || "Failed to save host");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    commitSave(false);
+    commitSave(authMethod === "password" && password.length > 0);
   };
 
   const filteredAliases = sshAliases.filter((a) =>
@@ -595,12 +611,13 @@ export function HostModal({ host, onClose, onSave }: HostModalProps) {
                 <button
                   type="submit"
                   className="primary"
+                  disabled={saving}
                   style={{
                     borderTopRightRadius: passwordSaveAvailable ? 0 : undefined,
                     borderBottomRightRadius: passwordSaveAvailable ? 0 : undefined,
                   }}
                 >
-                  Save Host
+                  {saving ? "Saving..." : "Save Host"}
                 </button>
                 {passwordSaveAvailable && (
                   <>

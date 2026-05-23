@@ -21,11 +21,9 @@ function host(authMethod: AuthMethod): Host {
 }
 
 describe("remote tmux command policy", () => {
-  it("keeps password-auth remotes interactive-only for beta", () => {
-    expect(supportsNativeTmuxCommands(host("password"))).toBe(false);
-    expect(nativeTmuxDisabledReason(host("password"), "Rename")).toBe(
-      "Rename require key/agent/alias auth until password sessions have a command channel.",
-    );
+  it("allows password-auth remotes to leverage native command channel via auto key provisioning", () => {
+    expect(supportsNativeTmuxCommands(host("password"))).toBe(true);
+    expect(nativeTmuxDisabledReason(host("password"), "Rename")).toBeUndefined();
     expect(PASSWORD_REMOTE_INTERACTIVE_ONLY_LABEL).toBe("remote interactive-only");
     expect(PASSWORD_REMOTE_COMMAND_CHANNEL_REASON).toContain("command channel");
   });

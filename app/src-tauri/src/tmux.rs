@@ -29,9 +29,36 @@ pub struct TmuxPaneIdentity {
 
 pub const PANE_LIST_FORMAT: &str = "#{pane_id}\t#{window_id}\t#{session_id}\t#{session_name}\t#{window_index}\t#{window_name}\t#{window_layout}\t#{pane_index}\t#{pane_title}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}";
 
-pub fn detect_local_version(binary: Option<&str>) -> Option<TmuxVersion> {
+pub fn resolve_tmux_path(binary: Option<&str>) -> String {
     let bin = binary.unwrap_or("tmux");
-    let output = Command::new(bin).arg("-V").output().ok()?;
+    if cfg!(test) {
+        return bin.to_string();
+    }
+    if bin == "tmux" {
+        #[cfg(target_os = "macos")]
+        {
+            let paths = [
+                "/opt/homebrew/bin/tmux",
+                "/usr/local/bin/tmux",
+                "/usr/bin/tmux",
+                "/bin/tmux",
+            ];
+            for p in &paths {
+                if std::path::Path::new(p).is_file() {
+                    return p.to_string();
+                }
+            }
+        }
+    }
+    bin.to_string()
+}
+
+pub fn detect_local_version(binary: Option<&str>) -> Option<TmuxVersion> {
+    let bin = resolve_tmux_path(binary);
+    let mut cmd = Command::new(&bin);
+    cmd.arg("-V");
+    crate::hide_window(&mut cmd);
+    let output = cmd.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -68,11 +95,12 @@ pub struct AttachArgs<'a> {
     pub session: &'a str,
     pub detach_others: bool,
     pub window: Option<&'a str>,
+    pub mouse_mode: bool,
 }
 
 pub fn build_attach_or_create(args: &AttachArgs<'_>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    out.push(args.binary.unwrap_or("tmux").to_string());
+    out.push(resolve_tmux_path(args.binary));
     if let Some(sock) = args.socket_path {
         out.push("-S".into());
         out.push(sock.into());
@@ -88,21 +116,20 @@ pub fn build_attach_or_create(args: &AttachArgs<'_>) -> Vec<String> {
         out.push("-n".into());
         out.push(w.into());
     }
-    // Chain a server-side option toggle that scopes mouse OFF to this
-    // session, so REMUX owns mouse gestures without echoing a command
-    // prompt to the user.
+    // Chain a server-side option toggle that scopes mouse mode to this
+    // session, so REMUX can dynamically enable/disable it.
     out.push(";".into());
     out.push("set-option".into());
     out.push("-t".into());
     out.push(args.session.into());
     out.push("mouse".into());
-    out.push("off".into());
+    out.push(if args.mouse_mode { "on" } else { "off" }.into());
     out
 }
 
 pub fn build_list_panes(args: &AttachArgs<'_>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    out.push(args.binary.unwrap_or("tmux").to_string());
+    out.push(resolve_tmux_path(args.binary));
     if let Some(sock) = args.socket_path {
         out.push("-S".into());
         out.push(sock.into());
@@ -120,7 +147,7 @@ pub fn with_tmux_prefix(
     command: &[&str],
 ) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    out.push(binary.unwrap_or("tmux").to_string());
+    out.push(resolve_tmux_path(binary));
     if let Some(sock) = socket_path {
         out.push("-S".into());
         out.push(sock.into());
@@ -293,11 +320,12 @@ pub fn list_local_panes(
         session: "",
         detach_others: false,
         window: None,
+        mouse_mode: false,
     });
-    let output = Command::new(&argv[0])
-        .args(&argv[1..])
-        .output()
-        .map_err(|e| e.to_string())?;
+    let mut cmd = Command::new(&argv[0]);
+    cmd.args(&argv[1..]);
+    crate::hide_window(&mut cmd);
+    let output = cmd.output().map_err(|e| e.to_string())?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
@@ -425,6 +453,7 @@ mod tests {
             session: "remux-dev",
             detach_others: false,
             window: None,
+            mouse_mode: false,
         });
         assert_eq!(
             cmd,
@@ -445,6 +474,34 @@ mod tests {
     }
 
     #[test]
+    fn builds_attach_mouse_on() {
+        let cmd = build_attach_or_create(&AttachArgs {
+            binary: None,
+            socket_path: None,
+            session: "remux-dev",
+            detach_others: false,
+            window: None,
+            mouse_mode: true,
+        });
+        assert_eq!(
+            cmd,
+            vec![
+                "tmux",
+                "new-session",
+                "-A",
+                "-s",
+                "remux-dev",
+                ";",
+                "set-option",
+                "-t",
+                "remux-dev",
+                "mouse",
+                "on",
+            ]
+        );
+    }
+
+    #[test]
     fn builds_attach_detach_others() {
         let cmd = build_attach_or_create(&AttachArgs {
             binary: Some("/opt/homebrew/bin/tmux"),
@@ -452,6 +509,7 @@ mod tests {
             session: "logs",
             detach_others: true,
             window: Some("api"),
+            mouse_mode: false,
         });
         assert_eq!(
             cmd,
@@ -484,6 +542,7 @@ mod tests {
             session: "ignored",
             detach_others: false,
             window: None,
+            mouse_mode: false,
         });
         assert_eq!(
             cmd,

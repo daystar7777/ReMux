@@ -64,9 +64,10 @@ pub fn resolve_host(alias: String) -> Result<SshConfigHost, String> {
         return Err("Invalid SSH config alias format".to_string());
     }
 
-    let output = Command::new("ssh")
-        .args(["-G", &alias])
-        .output()
+    let mut cmd = Command::new("ssh");
+    cmd.args(["-G", &alias]);
+    crate::hide_window(&mut cmd);
+    let output = cmd.output()
         .map_err(|e| format!("Failed to execute ssh -G: {e}"))?;
 
     if !output.status.success() {
