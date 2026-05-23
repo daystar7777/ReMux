@@ -133,8 +133,10 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
     const isFocusMode = viewMode === "focus";
     const isActiveOrDescendant = activePaneId ? hasActivePaneDescendant(node, activePaneId) : false;
     const shouldHide = isFocusMode && !isActiveOrDescendant;
-
-    void logDebug(`[ReMux DBG] renderNode id: ${node.id}, type: ${node.type}, isFocus: ${isFocusMode}, active: ${activePaneId}, isDesc: ${isActiveOrDescendant}, hide: ${shouldHide}`);
+    // No per-render logDebug here: this fires for every node on every React
+    // re-render of the grid (interval polls, atom updates, focus shifts),
+    // which spammed the Tauri IPC + debug.log file path and could starve
+    // the PTY data delivery.
 
     if (node.type === "leaf") {
       const isActive = node.id === activePaneId;

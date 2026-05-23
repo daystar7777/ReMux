@@ -705,6 +705,11 @@ export default function App() {
       const channel = new Channel<PtyEvent>();
       channel.onmessage = (evt) => {
         if (evt.kind === "data") {
+          // Intentionally no per-chunk logDebug. Full-screen TUIs like
+          // claude/codex emit dozens of redraws per second; routing each
+          // chunk through a Tauri invoke + synchronous file append
+          // saturates the IPC channel and starves the xterm.write path,
+          // which manifests as a blank terminal.
           const handle = termHandlesRef.current.get(paneId);
           handle?.write(evt.data);
 
@@ -1163,7 +1168,10 @@ export default function App() {
     const leafNode = findLeafNode(tab.layout, paneId);
     if (!leafNode || !leafNode.tmuxIdentity) return false;
 
-    const nativeId = leafNode.tmuxIdentity.paneId;
+    const identity = leafNode.tmuxIdentity;
+    const targetId = command === "zoom"
+      ? (identity.windowId || `${identity.sessionName}:${identity.windowIndex}`)
+      : identity.paneId;
     const isLocal = activeHost.auth_method === "local";
     const shouldUseNativeRemote = supportsNativeTmuxCommands(activeHost);
 
@@ -1182,7 +1190,7 @@ export default function App() {
     try {
       if (isLocal) {
         const localArgs = {
-          target: nativeId,
+          target: targetId,
           binary: activeHost.custom_tmux_binary || undefined,
           socketPath: activeHost.tmux_socket_path || undefined,
         };
@@ -1203,7 +1211,7 @@ export default function App() {
       } else {
         const remoteArgs = {
           ...remoteSshArgs(activeHost),
-          target: nativeId,
+          target: targetId,
           tmuxBinary: activeHost.custom_tmux_binary || undefined,
           socketPath: activeHost.tmux_socket_path || undefined,
         };
@@ -1227,7 +1235,7 @@ export default function App() {
       }, 250);
       return true;
     } catch (err) {
-      console.warn(`Failed to execute tmux command ${command} on target ${nativeId}:`, err);
+      console.warn(`Failed to execute tmux command ${command} on target ${targetId}:`, err);
       return false;
     }
   };

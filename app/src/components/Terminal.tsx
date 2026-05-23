@@ -24,7 +24,7 @@ import {
   summarize,
   wrapBracketedPaste,
 } from "../lib/clipboard";
-import { clipboardRead, clipboardWrite, logDebug } from "../lib/ipc";
+import { clipboardRead, clipboardWrite } from "../lib/ipc";
 
 
 export interface TerminalHandle {
@@ -113,6 +113,10 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
 
 
 
+    // Disable WebGL addon in macOS Tauri/WebKit webview because it suffers from context loss
+    // and rendering failures when switching to alternate screen buffers (blank screens in TUIs).
+    // Falling back to xterm.js's extremely stable standard DOM/Canvas renderer.
+    /*
     try {
       const webgl = new WebglAddon();
       webgl.onContextLoss(() => {
@@ -124,6 +128,7 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
     } catch (err) {
       console.warn("[REMUX] WebGL addon unavailable, using canvas fallback", err);
     }
+    */
 
     fit.fit();
     termRef.current = term;
@@ -212,7 +217,6 @@ export const Terminal = forwardRef<TerminalHandle, Props>(function Terminal(
     const MOUSE_SGR = /^\x1b\[<\d+;\d+;\d+[Mm]/;
     const MOUSE_X10 = /^\x1b\[M/;
     const onDataDisposer = term.onData((data) => {
-      logDebug("[xterm.onData] " + JSON.stringify(data));
       if (composingRef.current) {
         return;
       }

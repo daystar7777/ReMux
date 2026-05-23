@@ -58,6 +58,48 @@ fn looks_like_fingerprint_prompt(window: &str) -> bool {
     lower.contains("are you sure you want to continue connecting")
 }
 
+/// Find the byte length to safely deliver downstream from `buf` such that no
+/// multi-byte UTF-8 sequence is split across a chunk boundary. Returns
+/// `buf.len()` when the trailing bytes form a complete UTF-8 character, or a
+/// smaller offset that leaves an incomplete leading sequence to be carried
+/// into the next read.
+fn utf8_safe_split(buf: &[u8]) -> usize {
+    let len = buf.len();
+    if len == 0 {
+        return 0;
+    }
+    // A UTF-8 character is at most 4 bytes, so the start of any incomplete
+    // trailing sequence is within the last 3 bytes.
+    let scan_start = len.saturating_sub(3);
+    for i in (scan_start..len).rev() {
+        let byte = buf[i];
+        if byte < 0x80 {
+            // 1-byte ASCII char, complete at i+1.
+            return len;
+        }
+        if byte & 0xC0 == 0x80 {
+            // Continuation byte, keep walking back.
+            continue;
+        }
+        // Leader byte: figure out the expected sequence length.
+        let expected = if byte & 0xF8 == 0xF0 {
+            4
+        } else if byte & 0xF0 == 0xE0 {
+            3
+        } else if byte & 0xE0 == 0xC0 {
+            2
+        } else {
+            // Invalid leader; let lossy decode replace it and move on.
+            return len;
+        };
+        return if i + expected <= len { len } else { i };
+    }
+    // No leader found in the last 3 bytes; the buffer ends in pure
+    // continuation bytes, which by themselves can't form a valid char. Defer
+    // them entirely.
+    scan_start
+}
+
 impl PtyManager {
     pub fn new() -> Self {
         Self::default()
@@ -146,19 +188,58 @@ impl PtyManager {
             password_used_for_timeout.store(true, Ordering::Relaxed);
         });
 
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let channel_for_sender = channel_for_reader.clone();
+
+        // Spawn a dedicated thread to batch and send raw terminal data to the frontend.
+        // This decouples the critical OS PTY reading from blocking network/IPC calls,
+        // resolving PTY backpressure stalls/deadlocks when modern CLI tools (like Claude/Codex)
+        // produce heavy screen rendering streams.
+        thread::spawn(move || {
+            loop {
+                match rx.recv() {
+                    Ok(first_chunk) => {
+                        let mut merged = first_chunk;
+                        // Batch multiple outstanding chunks to reduce IPC overhead
+                        while let Ok(next_chunk) = rx.try_recv() {
+                            merged.push_str(&next_chunk);
+                        }
+                        if channel_for_sender
+                            .send(PtyEvent::Data { data: merged })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
         thread::spawn(move || {
             let mut buf = [0u8; 8192];
+            // Bytes carried over from the previous read() because they were
+            // the start of a multi-byte UTF-8 sequence whose continuation
+            // landed in the next chunk. Without this carry-over,
+            // from_utf8_lossy replaces the split bytes with U+FFFD and
+            // corrupts box-drawing / CJK / emoji glyphs at chunk boundaries.
+            let mut leftover: Vec<u8> = Vec::new();
             let mut tail = String::new();
             let mut fingerprint_detected = false;
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
-                        if channel_for_reader
-                            .send(PtyEvent::Data { data: chunk.clone() })
-                            .is_err()
-                        {
+                        let mut combined = std::mem::take(&mut leftover);
+                        combined.extend_from_slice(&buf[..n]);
+                        let split_at = utf8_safe_split(&combined);
+                        let (deliver, defer) = combined.split_at(split_at);
+                        let chunk = String::from_utf8_lossy(deliver).to_string();
+                        if !defer.is_empty() {
+                            leftover = defer.to_vec();
+                        }
+                        // Queue the chunk for non-blocking dispatch to the frontend
+                        if tx.send(chunk.clone()).is_err() {
                             break;
                         }
 
@@ -283,5 +364,56 @@ mod tests {
         assert!(looks_like_fingerprint_prompt("are you sure you want to continue connecting (yes/no)?"));
         assert!(!looks_like_fingerprint_prompt("Last login: ..."));
         assert!(!looks_like_fingerprint_prompt(""));
+    }
+
+    #[test]
+    fn utf8_split_keeps_complete_ascii() {
+        let buf = b"hello world";
+        assert_eq!(utf8_safe_split(buf), buf.len());
+    }
+
+    #[test]
+    fn utf8_split_defers_split_3byte_char() {
+        // U+2500 BOX DRAWINGS LIGHT HORIZONTAL = 0xE2 0x94 0x80
+        let mut buf = b"abc".to_vec();
+        buf.push(0xE2);
+        buf.push(0x94);
+        // Last byte (0x80) is missing; should defer the 3-byte leader.
+        let split = utf8_safe_split(&buf);
+        assert_eq!(split, 3);
+        assert_eq!(&buf[..split], b"abc");
+        assert_eq!(&buf[split..], &[0xE2, 0x94]);
+    }
+
+    #[test]
+    fn utf8_split_keeps_complete_3byte_char() {
+        let mut buf = b"abc".to_vec();
+        buf.extend_from_slice(&[0xE2, 0x94, 0x80]); // ─
+        let split = utf8_safe_split(&buf);
+        assert_eq!(split, buf.len());
+    }
+
+    #[test]
+    fn utf8_split_defers_split_4byte_char() {
+        // U+1F984 UNICORN = F0 9F A6 84
+        let mut buf = b"x".to_vec();
+        buf.extend_from_slice(&[0xF0, 0x9F]);
+        let split = utf8_safe_split(&buf);
+        assert_eq!(split, 1);
+        assert_eq!(&buf[split..], &[0xF0, 0x9F]);
+    }
+
+    #[test]
+    fn utf8_split_handles_pure_continuation_tail() {
+        // Pathological: buffer ends in 3 continuation bytes with no leader in
+        // the scan window. Defer them so they can join the next read.
+        let buf = vec![0x80u8, 0x80, 0x80, 0x80];
+        let split = utf8_safe_split(&buf);
+        assert_eq!(split, 1);
+    }
+
+    #[test]
+    fn utf8_split_handles_empty() {
+        assert_eq!(utf8_safe_split(&[]), 0);
     }
 }
