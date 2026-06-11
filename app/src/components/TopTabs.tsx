@@ -1,18 +1,29 @@
-import { useState } from "react";
+import { useState, type MouseEvent as ReactMouseEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { SquarePlus, X, Sliders, Server, Layers } from "lucide-react";
+import { Pin, SquarePlus, X, Sliders, Server, Layers } from "lucide-react";
 import {
   activeTabIdAtom,
+  activateAgentPaneAction,
   closeTabAction,
   openTabsAtom,
+  paneAgentStateAtom,
   profilesAtom,
   hostsAtom,
   rightPanelOpenAtom,
   updateProfileAction,
   sidebarCollapsedAtom,
   inventorySidebarCollapsedAtom,
+  pinEphemeralTabAction,
+  updateEphemeralProfileAction,
 } from "../state/atoms";
 import { openNewWindow } from "../lib/ipc";
+import {
+  agentStateLabel,
+  agentStateTone,
+  collectPaneIdsFromLayout,
+  isNavigableAgentState,
+  rollupAgentState,
+} from "../lib/agentState";
 
 interface TopTabsProps {
   onRenameWindowDirect?: (target: string, nextName: string) => Promise<void>;
@@ -23,8 +34,12 @@ export function TopTabs({ onRenameWindowDirect }: TopTabsProps) {
   const activeId = useAtomValue(activeTabIdAtom);
   const profiles = useAtomValue(profilesAtom);
   const hosts = useAtomValue(hostsAtom);
+  const paneAgentStates = useAtomValue(paneAgentStateAtom);
   const setActive = useSetAtom(activeTabIdAtom);
+  const activateAgentPane = useSetAtom(activateAgentPaneAction);
   const closeTab = useSetAtom(closeTabAction);
+  const pinEphemeralTab = useSetAtom(pinEphemeralTabAction);
+  const updateEphemeralProfile = useSetAtom(updateEphemeralProfileAction);
   const [panelOpen, setPanelOpen] = useAtom(rightPanelOpenAtom);
   const updateProfile = useSetAtom(updateProfileAction);
   const [sidebarCollapsed, setSidebarCollapsed] = useAtom(sidebarCollapsedAtom);
@@ -38,12 +53,23 @@ export function TopTabs({ onRenameWindowDirect }: TopTabsProps) {
     const newName = editingText.trim();
     if (!profile || !newName || newName === profile.display_alias) return;
 
-    await updateProfile({
-      ...profile,
-      display_alias: newName,
-    });
-
     const tab = tabs.find((t) => t.id === tabId);
+    if (tab?.ephemeralProfile) {
+      updateEphemeralProfile({
+        tabId,
+        profile: {
+          ...tab.ephemeralProfile,
+          display_alias: newName,
+        },
+      });
+      await pinEphemeralTab(tabId);
+    } else {
+      await updateProfile({
+        ...profile,
+        display_alias: newName,
+      });
+    }
+
     const findActivePaneIdentity = (node: any, activePaneId: string): any => {
       if (!node) return null;
       if (node.type === "leaf") {
@@ -70,9 +96,18 @@ export function TopTabs({ onRenameWindowDirect }: TopTabsProps) {
   return (
     <div className="top-tabs">
       {tabs.map((tab) => {
-        const profile = profiles.find((p) => p.id === tab.profileId);
+        const profile = profiles.find((p) => p.id === tab.profileId) ?? tab.ephemeralProfile;
         const host = profile ? hosts.find((h) => h.id === profile.host_id) : undefined;
+        const isEphemeral = !!tab.ephemeralProfile;
         const isEditing = tab.id === editingTabId;
+        const paneIds = collectPaneIdsFromLayout(tab.layout);
+        const agentRollup = rollupAgentState(paneIds.map((paneId) => paneAgentStates[paneId]));
+        const agentTone = agentStateTone(agentRollup);
+        // Only blocked/done/working have a jump target (pickNavigableAgentPane
+        // ignores idle/unknown). An idle rollup must render as a passive status
+        // indicator, never as a "Jump to..." control that does nothing on click.
+        const agentNavigable = isNavigableAgentState(agentRollup);
+        const agentLabelText = agentStateLabel(agentRollup).toLowerCase();
         const cls = [
           "tab",
           tab.id === activeId ? "active" : "",
@@ -119,6 +154,65 @@ export function TopTabs({ onRenameWindowDirect }: TopTabsProps) {
               />
             ) : (
               <span>{profile?.display_alias ?? "unknown"}</span>
+            )}
+            {agentRollup !== "unknown" && (
+              <span
+                {...(agentNavigable
+                  ? {
+                      role: "button",
+                      tabIndex: 0,
+                      title: `Jump to ${agentLabelText} agent pane`,
+                      "aria-label": `Jump to ${agentLabelText} agent pane`,
+                      onClick: (e: ReactMouseEvent) => {
+                        e.stopPropagation();
+                        activateAgentPane({ tabId: tab.id });
+                      },
+                      onKeyDown: (e: ReactKeyboardEvent) => {
+                        if (e.key !== "Enter" && e.key !== " ") return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        activateAgentPane({ tabId: tab.id });
+                      },
+                    }
+                  : {
+                      title: `${agentLabelText} agent`,
+                      "aria-label": `${agentLabelText} agent present`,
+                    })}
+                style={{
+                  cursor: agentNavigable ? "pointer" : "default",
+                  border: "1px solid var(--border)",
+                  borderRadius: "4px",
+                  color:
+                    agentTone === "danger"
+                      ? "var(--danger)"
+                      : agentTone === "ok"
+                        ? "var(--ok)"
+                        : agentTone === "accent"
+                          ? "var(--accent)"
+                          : "var(--fg-3)",
+                  fontSize: "9px",
+                  fontWeight: 700,
+                  padding: "1px 4px",
+                  textTransform: "uppercase",
+                }}
+              >
+                {agentRollup}
+              </span>
+            )}
+            {isEphemeral && (
+              <span
+                className="icon-btn"
+                role="button"
+                tabIndex={-1}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void pinEphemeralTab(tab.id);
+                }}
+                title="Save profile"
+                aria-label="Save profile"
+              >
+                <Pin size={11} />
+              </span>
             )}
             <span
               className="icon-btn"
@@ -189,4 +283,3 @@ export function TopTabs({ onRenameWindowDirect }: TopTabsProps) {
     </div>
   );
 }
-

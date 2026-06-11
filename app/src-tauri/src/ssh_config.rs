@@ -24,7 +24,8 @@ fn get_ssh_config_path() -> Option<PathBuf> {
 /// Reads the local ~/.ssh/config file and extracts all plain Host aliases
 /// excluding wildcards.
 pub fn list_hosts() -> Result<Vec<String>, String> {
-    let path = get_ssh_config_path().ok_or_else(|| "Could not determine home directory".to_string())?;
+    let path =
+        get_ssh_config_path().ok_or_else(|| "Could not determine home directory".to_string())?;
     if !path.exists() {
         return Ok(vec![]);
     }
@@ -45,7 +46,11 @@ pub fn list_hosts() -> Result<Vec<String>, String> {
             let parts = trimmed[5..].split_whitespace();
             for part in parts {
                 let clean = part.trim();
-                if !clean.is_empty() && !clean.contains('*') && !clean.contains('?') && clean.to_lowercase() != "key" {
+                if !clean.is_empty()
+                    && !clean.contains('*')
+                    && !clean.contains('?')
+                    && clean.to_lowercase() != "key"
+                {
                     aliases.push(clean.to_string());
                 }
             }
@@ -60,14 +65,20 @@ pub fn list_hosts() -> Result<Vec<String>, String> {
 /// Resolves a canonical host configuration by spawning `ssh -G <alias>`.
 pub fn resolve_host(alias: String) -> Result<SshConfigHost, String> {
     // Basic shell injection guard: ensure alias doesn't start with hyphen or contain invalid chars
-    if alias.starts_with('-') || alias.contains(' ') || alias.contains(';') || alias.contains('&') || alias.contains('|') {
+    if alias.starts_with('-')
+        || alias.contains(' ')
+        || alias.contains(';')
+        || alias.contains('&')
+        || alias.contains('|')
+    {
         return Err("Invalid SSH config alias format".to_string());
     }
 
     let mut cmd = Command::new("ssh");
     cmd.args(["-G", &alias]);
     crate::hide_window(&mut cmd);
-    let output = cmd.output()
+    let output = cmd
+        .output()
         .map_err(|e| format!("Failed to execute ssh -G: {e}"))?;
 
     if !output.status.success() {
@@ -111,7 +122,8 @@ pub fn resolve_host(alias: String) -> Result<SshConfigHost, String> {
                     // We only want to capture if it is a specific custom key file or if it's explicitly defined.
                     // To keep it simple, we filter out "~/.ssh/id_dsa", "~/.ssh/id_ecdsa", "~/.ssh/id_ecdsa_sk",
                     // "~/.ssh/id_ed25519", "~/.ssh/id_ed25519_sk", "~/.ssh/id_rsa".
-                    let val_trimmed = val.replace("~", &dirs::home_dir().unwrap_or_default().to_string_lossy());
+                    let val_trimmed =
+                        val.replace("~", &dirs::home_dir().unwrap_or_default().to_string_lossy());
                     let p = std::path::Path::new(&val_trimmed);
                     if p.exists() {
                         key_path = Some(val_trimmed);

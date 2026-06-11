@@ -2,9 +2,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Provider, createStore } from "jotai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { openTabsAtom } from "../state/atoms";
+import { openTabsAtom, paneAgentStateAtom } from "../state/atoms";
 import { TerminalGrid } from "./TerminalGrid";
 import type { PaneLayout } from "../state/atoms";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const xtermMock = vi.hoisted(() => {
   class MockTerminal {
@@ -162,5 +164,57 @@ describe("TerminalGrid Phantom Focus Guard verification", () => {
     const tabStateAfterRealClick = store.get(openTabsAtom)[0];
     expect(tabStateAfterRealClick.activePaneId).toBe(pane0Id); // Transferred to Pane 0
     expect(onPaneSelect).toHaveBeenCalledWith(pane0Id);
+  });
+
+  it("renders a pane agent badge when agent state is known", () => {
+    const store = createStore();
+    const tabId = "test_tab";
+    const paneId = "pane_agent";
+    const layout: PaneLayout = { type: "leaf", id: paneId, ptyId: "pty_agent" };
+
+    store.set(openTabsAtom, [
+      {
+        id: tabId,
+        profileId: "prof_1",
+        state: "connected",
+        layout,
+        activePaneId: paneId,
+      },
+    ]);
+    store.set(paneAgentStateAtom, {
+      [paneId]: {
+        state: "working",
+        agentLabel: "Codex",
+        source: "process",
+        confidence: "medium",
+        updatedAt: Date.now(),
+        revision: 1,
+      },
+    });
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        <Provider store={store}>
+          <TerminalGrid
+            tabId={tabId}
+            layout={layout}
+            activePaneId={paneId}
+            termHandlesRef={{ current: new Map() }}
+            onInput={vi.fn()}
+            onResize={vi.fn()}
+            onDoubleClick={vi.fn()}
+            onPasteRequested={vi.fn()}
+            onPaneCreated={vi.fn()}
+            localEcho={false}
+          />
+        </Provider>,
+      );
+    });
+
+    expect(container.textContent).toContain("Codex working");
   });
 });

@@ -160,12 +160,22 @@ export async function tmuxZoomLocalPane(args: LocalTmuxTargetArgs): Promise<void
   return invoke<void>("tmux_zoom_local_pane", { ...args });
 }
 
+export type TmuxResizeDirection = "left" | "right" | "up" | "down";
+
+export async function tmuxResizeLocalPane(args: LocalTmuxTargetArgs & { direction: TmuxResizeDirection; amount: number }): Promise<void> {
+  return invoke<void>("tmux_resize_local_pane", { ...args });
+}
+
 export async function tmuxSelectLocalLayout(args: LocalTmuxTargetArgs & { preset: TmuxLayoutPreset }): Promise<void> {
   return invoke<void>("tmux_select_local_layout", { ...args });
 }
 
 export async function tmuxRenameLocalWindow(args: LocalTmuxTargetArgs & { name: string }): Promise<void> {
   return invoke<void>("tmux_rename_local_window", { ...args });
+}
+
+export async function tmuxRenameLocalSession(args: LocalTmuxTargetArgs & { name: string }): Promise<void> {
+  return invoke<void>("tmux_rename_local_session", { ...args });
 }
 
 export async function tmuxRenameLocalPane(args: LocalTmuxTargetArgs & { title: string }): Promise<void> {
@@ -196,6 +206,10 @@ export async function tmuxZoomRemotePane(args: RemoteTmuxTargetArgs): Promise<vo
   return invoke<void>("tmux_zoom_remote_pane", { ...args });
 }
 
+export async function tmuxResizeRemotePane(args: RemoteTmuxTargetArgs & { direction: TmuxResizeDirection; amount: number }): Promise<void> {
+  return invoke<void>("tmux_resize_remote_pane", { ...args });
+}
+
 export async function tmuxSelectRemotePane(args: RemoteTmuxTargetArgs): Promise<void> {
   return invoke<void>("tmux_select_remote_pane", { ...args });
 }
@@ -206,6 +220,10 @@ export async function tmuxSelectRemoteLayout(args: RemoteTmuxTargetArgs & { pres
 
 export async function tmuxRenameRemoteWindow(args: RemoteTmuxTargetArgs & { name: string }): Promise<void> {
   return invoke<void>("tmux_rename_remote_window", { ...args });
+}
+
+export async function tmuxRenameRemoteSession(args: RemoteTmuxTargetArgs & { name: string }): Promise<void> {
+  return invoke<void>("tmux_rename_remote_session", { ...args });
 }
 
 export async function tmuxRenameRemotePane(args: RemoteTmuxTargetArgs & { title: string }): Promise<void> {

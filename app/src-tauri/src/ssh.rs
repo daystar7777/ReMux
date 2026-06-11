@@ -136,10 +136,9 @@ pub fn shell_escape(parts: &[String]) -> String {
     parts
         .iter()
         .map(|s| {
-            if s
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':' | '='))
-            {
+            if s.chars().all(|c| {
+                c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':' | '=')
+            }) {
                 s.clone()
             } else {
                 format!("'{}'", s.replace('\'', "'\\''"))
@@ -274,10 +273,9 @@ mod tests {
         assert!(!argv.contains(&"-t".to_string()));
         assert!(argv.windows(2).any(|w| w == ["-o", "BatchMode=yes"]));
         assert!(argv.windows(2).any(|w| w == ["-p", "2222"]));
-        assert!(
-            argv.windows(2)
-                .any(|w| w == ["-i", "/Users/me/.ssh/prod ed25519"])
-        );
+        assert!(argv
+            .windows(2)
+            .any(|w| w == ["-i", "/Users/me/.ssh/prod ed25519"]));
         assert_eq!(argv[argv.len() - 2], "deploy@prod-a");
         assert_eq!(argv[argv.len() - 1], "tmux list-panes -a");
     }
@@ -371,6 +369,8 @@ mod tests {
             mouse_mode: false,
         });
         assert_eq!(argv[0], "ssh");
-        assert!(argv.windows(2).any(|w| w == ["-o", "PreferredAuthentications=password"]));
+        assert!(argv
+            .windows(2)
+            .any(|w| w == ["-o", "PreferredAuthentications=password"]));
     }
 }

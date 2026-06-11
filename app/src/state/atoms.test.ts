@@ -1,17 +1,26 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createStore } from "jotai";
 import {
+  activateAgentPaneAction,
+  acknowledgePaneAgentDoneAction,
+  activeProfileAtom,
   openTabsAtom,
+  openEphemeralTabAction,
   activeTabIdAtom,
   cycleTabAction,
   mousePolicyAtom,
+  paneAgentStateAtom,
   type OpenTab,
   type PaneLayout,
   appearanceAtom,
   applyPresetAction,
   applyExternalConfigAction,
   configAtom,
+  migrateSessionInProfiles,
   pruneWorkspaceForConfig,
+  recoverLeafForEmptyLayout,
+  refreshPaneIdentitiesAction,
+  sanitizePersistedLayout,
   updateAppearanceAction,
   rightPanelOpenAtom,
   DEFAULT_APPEARANCE,
@@ -178,6 +187,182 @@ describe("applyPresetAction", () => {
 
     expect(store.get(openTabsAtom)[0].layout).toBe(layout);
   });
+
+  it("recovers empty layout from a previous leaf without rotating the pane id", () => {
+    const previous = { type: "leaf" as const, id: "pane-stable", ptyId: "pty-stable" };
+
+    expect(recoverLeafForEmptyLayout(previous)).toEqual({
+      ...previous,
+      tmuxIdentity: null,
+      ptyId: null,
+    });
+  });
+
+  it("sanitizes malformed persisted layout by carrying the active pane id forward", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sanitized = sanitizePersistedLayout(
+      { type: "row", id: "bad-root", children: [] },
+      "pane-survivor",
+    );
+
+    expect(sanitized).toEqual({
+      type: "leaf",
+      id: "pane-survivor",
+      ptyId: null,
+      tmuxIdentity: null,
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Recovered malformed persisted layout"));
+    warn.mockRestore();
+  });
+
+  it("drops malformed persisted children without rotating valid surviving leaf ids", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sanitized = sanitizePersistedLayout(
+      {
+        type: "column",
+        id: "root",
+        children: [
+          { type: "leaf", id: "pane-stable", ptyId: "old" },
+          { type: "leaf", id: "", ptyId: "bad" },
+          { type: "bogus", id: "nope" },
+        ],
+      },
+      "pane-stable",
+    );
+
+    expect(collectLeafIds(sanitized!)).toEqual(["pane-stable"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Recovered malformed persisted layout"));
+    warn.mockRestore();
+  });
+});
+
+describe("refreshPaneIdentitiesAction agent state", () => {
+  it("detects known agent process commands without changing pane ids", () => {
+    const store = createStore();
+    const layout: PaneLayout = {
+      type: "row",
+      id: "root",
+      children: [
+        { type: "leaf", id: "pane-codex", ptyId: "pty1" },
+        { type: "leaf", id: "pane-shell", ptyId: "pty2" },
+      ],
+    };
+    store.set(openTabsAtom, [
+      {
+        id: "tab-agent",
+        profileId: "prof1",
+        state: "connected",
+        layout,
+      },
+    ]);
+
+    store.set(refreshPaneIdentitiesAction, {
+      tabId: "tab-agent",
+      sessionPanes: [
+        {
+          paneId: "%1",
+          windowId: "@1",
+          sessionId: "$1",
+          sessionName: "remux",
+          windowIndex: 0,
+          windowName: "main",
+          paneIndex: 0,
+          paneCurrentCommand: "codex",
+        },
+        {
+          paneId: "%2",
+          windowId: "@1",
+          sessionId: "$1",
+          sessionName: "remux",
+          windowIndex: 0,
+          windowName: "main",
+          paneIndex: 1,
+          paneCurrentCommand: "zsh",
+        },
+      ],
+    });
+
+    const nextLayout = store.get(openTabsAtom)[0].layout;
+    expect(collectLeafIds(nextLayout!)).toEqual(["pane-codex", "pane-shell"]);
+    expect(store.get(paneAgentStateAtom)["pane-codex"].agentLabel).toBe("Codex");
+    expect(store.get(paneAgentStateAtom)["pane-codex"].state).toBe("idle");
+    expect(store.get(paneAgentStateAtom)["pane-shell"]).toBeUndefined();
+  });
+});
+
+describe("agent pane navigation actions", () => {
+  const layout: PaneLayout = {
+    type: "row",
+    id: "root",
+    children: [
+      { type: "leaf", id: "pane-working", ptyId: "pty1" },
+      { type: "leaf", id: "pane-done", ptyId: "pty2" },
+      { type: "leaf", id: "pane-blocked", ptyId: "pty3" },
+    ],
+  };
+
+  it("activates the highest-priority agent pane in the target tab", () => {
+    const store = createStore();
+    store.set(openTabsAtom, [
+      {
+        id: "tab-agent",
+        profileId: "prof1",
+        state: "connected",
+        layout,
+        activePaneId: "pane-working",
+      },
+    ]);
+    store.set(activeTabIdAtom, "tab-agent");
+    store.set(paneAgentStateAtom, {
+      "pane-working": {
+        state: "working",
+        agentLabel: "Codex",
+        source: "process",
+        confidence: "medium",
+        updatedAt: Date.now(),
+        revision: 1,
+      },
+      "pane-done": {
+        state: "done",
+        agentLabel: "Claude",
+        source: "integration",
+        confidence: "high",
+        updatedAt: Date.now(),
+        revision: 2,
+      },
+      "pane-blocked": {
+        state: "blocked",
+        agentLabel: "Gemini",
+        source: "manual",
+        confidence: "high",
+        updatedAt: Date.now(),
+        revision: 3,
+      },
+    });
+
+    const selected = store.set(activateAgentPaneAction, { tabId: "tab-agent" });
+
+    expect(selected).toBe("pane-blocked");
+    expect(store.get(openTabsAtom)[0].activePaneId).toBe("pane-blocked");
+  });
+
+  it("acknowledges done when a done pane is selected", () => {
+    const store = createStore();
+    store.set(paneAgentStateAtom, {
+      "pane-done": {
+        state: "done",
+        agentLabel: "Claude",
+        source: "integration",
+        confidence: "high",
+        updatedAt: Date.now(),
+        revision: 9,
+      },
+    });
+
+    store.set(acknowledgePaneAgentDoneAction, "pane-done");
+
+    expect(store.get(paneAgentStateAtom)["pane-done"].acknowledgedRevision).toBe(9);
+  });
 });
 
 const host = (id: string): Host => ({
@@ -196,6 +381,93 @@ const profile = (id: string, hostId: string): Profile => ({
   display_alias: id,
   host_id: hostId,
   tmux_session_name: id,
+});
+
+describe("migrateSessionInProfiles", () => {
+  const p = (id: string, hostId: string, session: string, alias: string): Profile => ({
+    ...profile(id, hostId),
+    tmux_session_name: session,
+    display_alias: alias,
+  });
+
+  it("migrates every same-host profile targeting the renamed session, alias untouched", () => {
+    const profiles: Profile[] = [
+      p("a", "h1", "work", "host1 · work"),
+      p("b", "h1", "work", "my custom work label"),
+      p("c", "h1", "other", "host1 · other"),
+      p("d", "h2", "work", "host2 · work"),
+    ];
+
+    const next = migrateSessionInProfiles(profiles, "h1", "work", "build");
+    expect(next).not.toBeNull();
+    const byId = Object.fromEntries(next!.map((x) => [x.id, x]));
+
+    // Both h1/work profiles migrate their target.
+    expect(byId.a.tmux_session_name).toBe("build");
+    expect(byId.b.tmux_session_name).toBe("build");
+    // display_alias is a local label and is never rewritten.
+    expect(byId.a.display_alias).toBe("host1 · work");
+    expect(byId.b.display_alias).toBe("my custom work label");
+    // Different session on same host, and same session on a different host, untouched.
+    expect(byId.c.tmux_session_name).toBe("other");
+    expect(byId.d.tmux_session_name).toBe("work");
+  });
+
+  it("returns null when nothing matches, to skip a redundant save", () => {
+    const profiles: Profile[] = [p("a", "h1", "work", "work")];
+    expect(migrateSessionInProfiles(profiles, "h1", "absent", "build")).toBeNull();
+    expect(migrateSessionInProfiles(profiles, "h2", "work", "build")).toBeNull();
+  });
+
+  it("returns null for a no-op or empty rename", () => {
+    const profiles: Profile[] = [p("a", "h1", "work", "work")];
+    expect(migrateSessionInProfiles(profiles, "h1", "work", "work")).toBeNull();
+    expect(migrateSessionInProfiles(profiles, "h1", "work", "")).toBeNull();
+  });
+});
+
+describe("ephemeral discovery tabs", () => {
+  it("opens a discovered target without adding a saved profile", () => {
+    const store = createStore();
+    const discovered: Profile = {
+      id: "prof_discovered",
+      host_id: "h1",
+      tmux_session_name: "work",
+      tmux_window_target: "@7",
+      display_alias: "localhost · work:0 editor",
+    };
+
+    const tabId = store.set(openEphemeralTabAction, discovered);
+
+    expect(store.get(configAtom).profiles).toEqual([]);
+    expect(store.get(activeTabIdAtom)).toBe(tabId);
+    expect(store.get(openTabsAtom)[0].ephemeralProfile).toEqual(discovered);
+    expect(store.get(activeProfileAtom)).toEqual(discovered);
+  });
+
+  it("keeps ephemeral tabs during config pruning", () => {
+    const ephemeral: OpenTab = {
+      id: "tab_ephemeral",
+      profileId: "prof_ephemeral",
+      ephemeralProfile: {
+        id: "prof_ephemeral",
+        host_id: "h1",
+        tmux_session_name: "work",
+        display_alias: "temporary",
+      },
+      state: "idle",
+    };
+    const stale: OpenTab = { id: "tab_stale", profileId: "missing", state: "idle" };
+
+    const pruned = pruneWorkspaceForConfig([ephemeral, stale], "tab_stale", {
+      hosts: [host("h1")],
+      profiles: [],
+      version: 1,
+    });
+
+    expect(pruned.tabs).toEqual([ephemeral]);
+    expect(pruned.activeTabId).toBe("tab_ephemeral");
+  });
 });
 
 describe("workspace persistence cleanup", () => {

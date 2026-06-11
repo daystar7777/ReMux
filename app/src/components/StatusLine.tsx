@@ -10,11 +10,17 @@ import {
   inputBroadcastAtom,
   localeWarningAtom,
   mousePolicyAtom,
+  paneAgentStateAtom,
   tmuxVersionLabelAtom,
   viewModeAtom,
   type ViewMode,
   type PaneLayout,
 } from "../state/atoms";
+import {
+  agentStateLabel,
+  agentStateTone,
+  effectiveAgentState,
+} from "../lib/agentState";
 import {
   PASSWORD_REMOTE_COMMAND_CHANNEL_REASON,
   PASSWORD_REMOTE_INTERACTIVE_ONLY_LABEL,
@@ -56,6 +62,7 @@ export function StatusLine() {
   const [mousePolicy, setMousePolicy] = useAtom(mousePolicyAtom);
   const [broadcastRecord, setBroadcastRecord] = useAtom(inputBroadcastAtom);
   const diagnostics = useAtomValue(diagnosticsAtom);
+  const paneAgentStates = useAtomValue(paneAgentStateAtom);
 
   const formatMemory = (kb?: number) => {
     if (kb === undefined) return "—";
@@ -76,6 +83,9 @@ export function StatusLine() {
     : tab?.activePaneId ?? "—";
   const rtt = tab?.rttMs;
   const paneDiag = tab?.activePaneId ? diagnostics[tab.activePaneId] : undefined;
+  const paneAgentState = tab?.activePaneId ? paneAgentStates[tab.activePaneId] : undefined;
+  const activeAgentState = effectiveAgentState(paneAgentState);
+  const activeAgentTone = agentStateTone(activeAgentState);
   const nativeTmuxCommandsEnabled = supportsNativeTmuxCommands(host);
   const remoteInteractiveOnly = host ? !nativeTmuxCommandsEnabled : false;
 
@@ -162,6 +172,27 @@ export function StatusLine() {
           <span className="sep" />
           <span className="field">
             <strong>mem</strong> {formatMemory(paneDiag.memoryKb)}
+          </span>
+        </>
+      )}
+      {paneAgentState?.agentLabel && activeAgentState !== "unknown" && (
+        <>
+          <span className="sep" />
+          <span
+            className="field"
+            title={`${paneAgentState.agentLabel}: ${agentStateLabel(activeAgentState)} (${paneAgentState.source}, ${paneAgentState.confidence})`}
+            style={{
+              color:
+                activeAgentTone === "danger"
+                  ? "var(--danger)"
+                  : activeAgentTone === "ok"
+                    ? "var(--ok)"
+                    : activeAgentTone === "accent"
+                      ? "var(--accent)"
+                      : "var(--fg-2)",
+            }}
+          >
+            <strong>agent</strong> {paneAgentState.agentLabel} {activeAgentState}
           </span>
         </>
       )}

@@ -180,16 +180,50 @@ pub fn build_split_pane(
     ))
 }
 
-pub fn build_kill_pane(binary: Option<&str>, socket_path: Option<&str>, target: &str) -> Vec<String> {
+pub fn build_kill_pane(
+    binary: Option<&str>,
+    socket_path: Option<&str>,
+    target: &str,
+) -> Vec<String> {
     with_tmux_prefix(binary, socket_path, &["kill-pane", "-t", target])
 }
 
-pub fn build_select_pane(binary: Option<&str>, socket_path: Option<&str>, target: &str) -> Vec<String> {
+pub fn build_select_pane(
+    binary: Option<&str>,
+    socket_path: Option<&str>,
+    target: &str,
+) -> Vec<String> {
     with_tmux_prefix(binary, socket_path, &["select-pane", "-t", target])
 }
 
-pub fn build_zoom_pane(binary: Option<&str>, socket_path: Option<&str>, target: &str) -> Vec<String> {
+pub fn build_zoom_pane(
+    binary: Option<&str>,
+    socket_path: Option<&str>,
+    target: &str,
+) -> Vec<String> {
     with_tmux_prefix(binary, socket_path, &["resize-pane", "-Z", "-t", target])
+}
+
+pub fn build_resize_pane(
+    binary: Option<&str>,
+    socket_path: Option<&str>,
+    target: &str,
+    direction: &str,
+    amount: u16,
+) -> Result<Vec<String>, String> {
+    let flag = match direction {
+        "left" => "-L",
+        "right" => "-R",
+        "up" => "-U",
+        "down" => "-D",
+        _ => return Err(format!("unsupported resize direction: {direction}")),
+    };
+    let amount_s = amount.max(1).to_string();
+    Ok(with_tmux_prefix(
+        binary,
+        socket_path,
+        &["resize-pane", "-t", target, flag, &amount_s],
+    ))
 }
 
 pub fn build_select_layout(
@@ -220,13 +254,26 @@ pub fn build_rename_window(
     with_tmux_prefix(binary, socket_path, &["rename-window", "-t", target, name])
 }
 
+pub fn build_rename_session(
+    binary: Option<&str>,
+    socket_path: Option<&str>,
+    target: &str,
+    name: &str,
+) -> Vec<String> {
+    with_tmux_prefix(binary, socket_path, &["rename-session", "-t", target, name])
+}
+
 pub fn build_rename_pane(
     binary: Option<&str>,
     socket_path: Option<&str>,
     target: &str,
     title: &str,
 ) -> Vec<String> {
-    with_tmux_prefix(binary, socket_path, &["select-pane", "-t", target, "-T", title])
+    with_tmux_prefix(
+        binary,
+        socket_path,
+        &["select-pane", "-t", target, "-T", title],
+    )
 }
 
 pub fn build_set_mouse(
@@ -262,13 +309,7 @@ pub fn build_set_mouse_legacy(
         "mouse-resize-pane",
     ];
     opts.iter()
-        .map(|opt| {
-            with_tmux_prefix(
-                binary,
-                socket_path,
-                &["set-option", "-t", target, opt, val],
-            )
-        })
+        .map(|opt| with_tmux_prefix(binary, socket_path, &["set-option", "-t", target, opt, val]))
         .collect()
 }
 
@@ -288,7 +329,6 @@ pub fn build_kill_window(
     with_tmux_prefix(binary, socket_path, &["kill-window", "-t", target_window])
 }
 
-
 pub fn parse_pane_row(row: &str) -> Option<TmuxPaneIdentity> {
     let parts: Vec<&str> = row.split(PANE_LIST_FIELD_SEPARATOR).collect();
     if parts.len() < 11 {
@@ -307,7 +347,11 @@ pub fn parse_pane_row(row: &str) -> Option<TmuxPaneIdentity> {
         session_name: parts[3].to_string(),
         window_index: parts[4].parse().ok()?,
         window_name: parts[5].to_string(),
-        window_layout: if has_window_layout { non_empty(parts[6]) } else { None },
+        window_layout: if has_window_layout {
+            non_empty(parts[6])
+        } else {
+            None
+        },
         pane_index: parts[pane_index_idx].parse().ok()?,
         pane_title: non_empty(parts[pane_title_idx]),
         pane_pid: parts[pane_pid_idx].parse().ok(),
@@ -381,20 +425,25 @@ pub fn build_hierarchy(panes: Vec<TmuxPaneIdentity>) -> Vec<TmuxSessionNode> {
 
     for p in panes {
         // Find or create session
-        let session_idx = if let Some(idx) = sessions.iter().position(|s| s.session_id == p.session_id) {
-            idx
-        } else {
-            sessions.push(TmuxSessionNode {
-                session_id: p.session_id.clone(),
-                session_name: p.session_name.clone(),
-                windows: Vec::new(),
-            });
-            sessions.len() - 1
-        };
+        let session_idx =
+            if let Some(idx) = sessions.iter().position(|s| s.session_id == p.session_id) {
+                idx
+            } else {
+                sessions.push(TmuxSessionNode {
+                    session_id: p.session_id.clone(),
+                    session_name: p.session_name.clone(),
+                    windows: Vec::new(),
+                });
+                sessions.len() - 1
+            };
         let session = &mut sessions[session_idx];
 
         // Find or create window
-        let window_idx = if let Some(idx) = session.windows.iter().position(|w| w.window_id == p.window_id) {
+        let window_idx = if let Some(idx) = session
+            .windows
+            .iter()
+            .position(|w| w.window_id == p.window_id)
+        {
             idx
         } else {
             session.windows.push(TmuxWindowNode {
@@ -405,7 +454,11 @@ pub fn build_hierarchy(panes: Vec<TmuxPaneIdentity>) -> Vec<TmuxSessionNode> {
                 panes: Vec::new(),
             });
             session.windows.sort_by_key(|w| w.window_index);
-            session.windows.iter().position(|w| w.window_id == p.window_id).unwrap()
+            session
+                .windows
+                .iter()
+                .position(|w| w.window_id == p.window_id)
+                .unwrap()
         };
         let window = &mut session.windows[window_idx];
         if window.window_layout.is_none() {
@@ -581,7 +634,10 @@ mod tests {
         assert_eq!(pane.pane_title.as_deref(), Some("vim"));
         assert_eq!(pane.pane_pid, Some(12345));
         assert_eq!(pane.pane_current_command.as_deref(), Some("nvim"));
-        assert_eq!(pane.pane_current_path.as_deref(), Some("/Users/storysq/REMUX"));
+        assert_eq!(
+            pane.pane_current_path.as_deref(),
+            Some("/Users/storysq/REMUX")
+        );
     }
 
     #[test]
@@ -601,19 +657,62 @@ mod tests {
         );
         assert_eq!(
             build_split_pane(Some("/opt/tmux"), Some("/tmp/sock"), "%3", "row").unwrap(),
-            vec!["/opt/tmux", "-S", "/tmp/sock", "split-window", "-v", "-t", "%3"]
+            vec![
+                "/opt/tmux",
+                "-S",
+                "/tmp/sock",
+                "split-window",
+                "-v",
+                "-t",
+                "%3"
+            ]
         );
         assert!(build_split_pane(None, None, "%3", "diagonal").is_err());
-        assert_eq!(build_kill_pane(None, None, "%3"), vec!["tmux", "kill-pane", "-t", "%3"]);
-        assert_eq!(build_select_pane(None, None, "%3"), vec!["tmux", "select-pane", "-t", "%3"]);
-        assert_eq!(build_zoom_pane(None, None, "%3"), vec!["tmux", "resize-pane", "-Z", "-t", "%3"]);
+        assert_eq!(
+            build_kill_pane(None, None, "%3"),
+            vec!["tmux", "kill-pane", "-t", "%3"]
+        );
+        assert_eq!(
+            build_select_pane(None, None, "%3"),
+            vec!["tmux", "select-pane", "-t", "%3"]
+        );
+        assert_eq!(
+            build_zoom_pane(None, None, "%3"),
+            vec!["tmux", "resize-pane", "-Z", "-t", "%3"]
+        );
+        assert_eq!(
+            build_resize_pane(None, None, "%3", "right", 5).unwrap(),
+            vec!["tmux", "resize-pane", "-t", "%3", "-R", "5"]
+        );
+        assert_eq!(
+            build_resize_pane(Some("tmux"), Some("/tmp/sock"), "%3", "up", 2).unwrap(),
+            vec![
+                "tmux",
+                "-S",
+                "/tmp/sock",
+                "resize-pane",
+                "-t",
+                "%3",
+                "-U",
+                "2"
+            ]
+        );
+        assert!(build_resize_pane(None, None, "%3", "diagonal", 5).is_err());
         assert_eq!(
             build_select_layout(None, None, "@2", "even").unwrap(),
             vec!["tmux", "select-layout", "-t", "@2", "tiled"]
         );
         assert_eq!(
             build_select_layout(Some("tmux"), Some("/tmp/sock"), "@2", "main-left").unwrap(),
-            vec!["tmux", "-S", "/tmp/sock", "select-layout", "-t", "@2", "main-vertical"]
+            vec![
+                "tmux",
+                "-S",
+                "/tmp/sock",
+                "select-layout",
+                "-t",
+                "@2",
+                "main-vertical"
+            ]
         );
         assert_eq!(
             build_select_layout(None, None, "@2", "main-top").unwrap(),
@@ -623,6 +722,10 @@ mod tests {
         assert_eq!(
             build_rename_window(None, None, "remux:1", "server logs"),
             vec!["tmux", "rename-window", "-t", "remux:1", "server logs"]
+        );
+        assert_eq!(
+            build_rename_session(None, None, "remux", "new-remux"),
+            vec!["tmux", "rename-session", "-t", "remux", "new-remux"]
         );
         assert_eq!(
             build_rename_pane(None, None, "%3", "worker"),
@@ -695,7 +798,10 @@ mod tests {
         assert_eq!(hierarchy[0].session_name, "dev");
         assert_eq!(hierarchy[0].windows.len(), 2);
         assert_eq!(hierarchy[0].windows[0].window_name, "sh");
-        assert_eq!(hierarchy[0].windows[0].window_layout.as_deref(), Some("layout-a"));
+        assert_eq!(
+            hierarchy[0].windows[0].window_layout.as_deref(),
+            Some("layout-a")
+        );
         assert_eq!(hierarchy[0].windows[0].panes.len(), 2);
         assert_eq!(hierarchy[0].windows[0].panes[0].pane_id, "%1");
         assert_eq!(hierarchy[0].windows[0].panes[1].pane_id, "%2");
@@ -717,9 +823,28 @@ mod tests {
     fn builds_legacy_mouse() {
         let cmds = build_set_mouse_legacy(None, None, "dev", true);
         assert_eq!(cmds.len(), 4);
-        assert_eq!(cmds[0], vec!["tmux", "set-option", "-t", "dev", "mode-mouse", "on"]);
-        assert_eq!(cmds[1], vec!["tmux", "set-option", "-t", "dev", "mouse-select-pane", "on"]);
-        assert_eq!(cmds[2], vec!["tmux", "set-option", "-t", "dev", "mouse-select-window", "on"]);
-        assert_eq!(cmds[3], vec!["tmux", "set-option", "-t", "dev", "mouse-resize-pane", "on"]);
+        assert_eq!(
+            cmds[0],
+            vec!["tmux", "set-option", "-t", "dev", "mode-mouse", "on"]
+        );
+        assert_eq!(
+            cmds[1],
+            vec!["tmux", "set-option", "-t", "dev", "mouse-select-pane", "on"]
+        );
+        assert_eq!(
+            cmds[2],
+            vec![
+                "tmux",
+                "set-option",
+                "-t",
+                "dev",
+                "mouse-select-window",
+                "on"
+            ]
+        );
+        assert_eq!(
+            cmds[3],
+            vec!["tmux", "set-option", "-t", "dev", "mouse-resize-pane", "on"]
+        );
     }
 }

@@ -191,6 +191,14 @@ impl PtyManager {
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         let channel_for_sender = channel_for_reader.clone();
 
+        // PTY trace toggle: set REMUX_PTY_TRACE=/path/to/file to record
+        // every batched chunk emitted toward xterm.js, with a timestamp
+        // and the session id. Bypasses the Tauri invoke / log_debug path
+        // entirely so it adds no IPC pressure and stays usable when
+        // diagnosing "frontend sees nothing" symptoms.
+        let trace_path = std::env::var("REMUX_PTY_TRACE").ok();
+        let trace_session = id.clone();
+
         // Spawn a dedicated thread to batch and send raw terminal data to the frontend.
         // This decouples the critical OS PTY reading from blocking network/IPC calls,
         // resolving PTY backpressure stalls/deadlocks when modern CLI tools (like Claude/Codex)
@@ -203,6 +211,28 @@ impl PtyManager {
                         // Batch multiple outstanding chunks to reduce IPC overhead
                         while let Ok(next_chunk) = rx.try_recv() {
                             merged.push_str(&next_chunk);
+                        }
+
+                        if let Some(path) = trace_path.as_deref() {
+                            if let Ok(mut f) = std::fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(path)
+                            {
+                                use std::io::Write;
+                                let now = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_millis())
+                                    .unwrap_or(0);
+                                let _ = writeln!(
+                                    f,
+                                    "[{}ms sess={} bytes={}] {:?}",
+                                    now,
+                                    trace_session,
+                                    merged.len(),
+                                    merged
+                                );
+                            }
                         }
                         if channel_for_sender
                             .send(PtyEvent::Data { data: merged })
@@ -257,16 +287,19 @@ impl PtyManager {
                             tail.push_str(&chunk);
                             if tail.len() > 512 {
                                 let keep_start = tail.len() - 512;
-                                if let Some(idx) = tail.char_indices().map(|(i, _)| i).find(|&i| i >= keep_start) {
+                                if let Some(idx) = tail
+                                    .char_indices()
+                                    .map(|(i, _)| i)
+                                    .find(|&i| i >= keep_start)
+                                {
                                     tail.drain(..idx);
                                 }
                             }
 
                             if !fingerprint_detected && looks_like_fingerprint_prompt(&tail) {
                                 let challenge = tail.clone();
-                                let _ = channel_for_reader.send(PtyEvent::Fingerprint {
-                                    challenge,
-                                });
+                                let _ =
+                                    channel_for_reader.send(PtyEvent::Fingerprint { challenge });
                                 fingerprint_detected = true;
                             }
 
@@ -338,6 +371,16 @@ impl PtyManager {
     pub fn kill(&self, id: &str) -> Result<()> {
         let mut sessions = self.sessions.lock().unwrap();
         if let Some(s) = sessions.remove(id) {
+            #[cfg(unix)]
+            {
+                if let Some(pgid) = s.master.process_group_leader() {
+                    if pgid > 0 {
+                        unsafe {
+                            libc::kill(-pgid, libc::SIGKILL);
+                        }
+                    }
+                }
+            }
             let mut guard = s.child.lock().unwrap();
             let _ = guard.kill();
         }
@@ -353,7 +396,9 @@ mod tests {
     fn detects_password_prompt() {
         assert!(looks_like_password_prompt("storysq@10.0.0.5's password: "));
         assert!(looks_like_password_prompt("Password: "));
-        assert!(looks_like_password_prompt("Enter passphrase for key '/Users/me/.ssh/id_ed25519':"));
+        assert!(looks_like_password_prompt(
+            "Enter passphrase for key '/Users/me/.ssh/id_ed25519':"
+        ));
         assert!(!looks_like_password_prompt("Last login: ..."));
         assert!(!looks_like_password_prompt(""));
     }
@@ -361,7 +406,9 @@ mod tests {
     #[test]
     fn detects_fingerprint_prompt() {
         assert!(looks_like_fingerprint_prompt("The authenticity of host '10.0.0.5 (10.0.0.5)' can't be established.\nED25519 key fingerprint is SHA256:7u7Xq...\nAre you sure you want to continue connecting (yes/no/[fingerprint])? "));
-        assert!(looks_like_fingerprint_prompt("are you sure you want to continue connecting (yes/no)?"));
+        assert!(looks_like_fingerprint_prompt(
+            "are you sure you want to continue connecting (yes/no)?"
+        ));
         assert!(!looks_like_fingerprint_prompt("Last login: ..."));
         assert!(!looks_like_fingerprint_prompt(""));
     }

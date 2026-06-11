@@ -1,15 +1,20 @@
 import React from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Terminal, type PasteRequest, type TerminalHandle } from "./Terminal";
-import { openTabsAtom, type PaneLayout, splitPaneAction, closePaneAction, viewModeAtom, applyPresetAction } from "../state/atoms";
-import { logDebug, type TmuxLayoutPreset } from "../lib/ipc";
-import { Columns, Pencil, Rows, Tag, X, LayoutGrid, Maximize2, Minimize2 } from "lucide-react";
+import { acknowledgePaneAgentDoneAction, openTabsAtom, paneAgentStateAtom, type PaneLayout, splitPaneAction, closePaneAction, viewModeAtom, applyPresetAction } from "../state/atoms";
+import { logDebug, type TmuxLayoutPreset, type TmuxResizeDirection } from "../lib/ipc";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Columns, Pencil, Rows, Tag, X, LayoutGrid, Maximize2, Minimize2 } from "lucide-react";
 import { RecoveryOverlay } from "./RecoveryOverlay";
 import {
   parseTmuxLayout,
   tmuxPaneIdToLayoutPaneId,
   type TmuxLayoutNode,
 } from "../lib/tmuxLayout";
+import {
+  agentStateLabel,
+  agentStateTone,
+  effectiveAgentState,
+} from "../lib/agentState";
 
 interface TerminalGridProps {
   tabId: string;
@@ -29,6 +34,7 @@ interface TerminalGridProps {
   onApplyLayoutPreset?: (paneId: string, preset: TmuxLayoutPreset) => void;
   onRenameWindow?: (paneId: string) => void;
   onRenamePane?: (paneId: string) => void;
+  onResizePane?: (paneId: string, direction: TmuxResizeDirection, amount?: number) => void;
   nativeRenameDisabledReason?: string;
   onPaneSelect?: (paneId: string) => void;
 }
@@ -51,6 +57,7 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
   onApplyLayoutPreset,
   onRenameWindow,
   onRenamePane,
+  onResizePane,
   nativeRenameDisabledReason,
   onPaneSelect,
 }) => {
@@ -59,6 +66,8 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
   const closePane = useSetAtom(closePaneAction);
   const applyPreset = useSetAtom(applyPresetAction);
   const viewMode = useAtomValue(viewModeAtom);
+  const paneAgentStates = useAtomValue(paneAgentStateAtom);
+  const acknowledgePaneAgentDone = useSetAtom(acknowledgePaneAgentDoneAction);
   const [showPresetDropdownId, setShowPresetDropdownId] = React.useState<string | null>(null);
   const lastInteractionTimeRef = React.useRef<number>(0);
   const lastInteractionPaneIdRef = React.useRef<string | null>(null);
@@ -106,10 +115,12 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
     }
     const activeTab = tabs.find((t) => t.id === tabId);
     if (activeTab && activeTab.activePaneId === paneId) {
+      acknowledgePaneAgentDone(paneId);
       void logDebug("[ReMux Debug] Pane already active, returning early.");
       return;
     }
     onPaneSelect?.(paneId);
+    acknowledgePaneAgentDone(paneId);
     void logDebug(`[ReMux Debug] Updating tabs state with activePaneId: ${paneId}`);
     setTabs(
       tabs.map((t) => {
@@ -150,6 +161,9 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
       const splitFallbackTitle = hasTmuxIdentity
         ? "Native tmux split"
         : "REMUX local split fallback; native tmux identity is unknown";
+      const agentState = paneAgentStates[node.id];
+      const effectiveState = effectiveAgentState(agentState);
+      const agentTone = agentStateTone(effectiveState);
       return (
         <div
           key={node.id}
@@ -279,6 +293,29 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
               >
                 {identityMode}
               </span>
+              {agentState?.agentLabel && effectiveState !== "unknown" && (
+                <span
+                  title={`${agentState.agentLabel}: ${agentStateLabel(effectiveState)} (${agentState.source}, ${agentState.confidence})`}
+                  style={{
+                    border: "1px solid var(--border)",
+                    borderRadius: "4px",
+                    color:
+                      agentTone === "danger"
+                        ? "var(--danger)"
+                        : agentTone === "ok"
+                          ? "var(--ok)"
+                          : agentTone === "accent"
+                            ? "var(--accent)"
+                            : "var(--fg-3)",
+                    fontSize: "9px",
+                    fontWeight: 700,
+                    padding: "1px 4px",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {agentState.agentLabel} {effectiveState}
+                </span>
+              )}
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: "2px" }} onClick={(e) => e.stopPropagation()}>
@@ -330,6 +367,34 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
               >
                 <Tag size={11} />
               </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
+                {([
+                  ["left", ArrowLeft, "Shrink/expand pane left"],
+                  ["right", ArrowRight, "Shrink/expand pane right"],
+                  ["up", ArrowUp, "Shrink/expand pane up"],
+                  ["down", ArrowDown, "Shrink/expand pane down"],
+                ] as const).map(([direction, Icon, title]) => (
+                  <button
+                    key={direction}
+                    className="icon-btn"
+                    disabled={!hasTmuxIdentity || !onResizePane}
+                    onClick={() => onResizePane?.(node.id, direction, 5)}
+                    title={hasTmuxIdentity ? title : "Pane resize requires a known native tmux pane identity"}
+                    style={{
+                      width: "18px",
+                      height: "22px",
+                      padding: 0,
+                      border: "none",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      opacity: hasTmuxIdentity && onResizePane ? 1 : 0.35,
+                    }}
+                  >
+                    <Icon size={10} />
+                  </button>
+                ))}
+              </div>
               <div style={{ position: "relative" }}>
                 <button
                   className="icon-btn"

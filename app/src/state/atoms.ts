@@ -4,6 +4,16 @@ import type { TmuxPaneIdentity, TmuxSessionNode } from "../lib/ipc";
 import { CONFIG_VERSION } from "../types/config";
 import type { ClipboardSnapshot } from "../lib/clipboard";
 import {
+  buildProcessAgentState,
+  markAgentOutput,
+} from "../lib/agentDetection";
+import {
+  acknowledgeDoneState,
+  collectPaneIdsFromLayout,
+  pickNavigableAgentPane,
+  type PaneAgentState,
+} from "../lib/agentState";
+import {
   hostAccount,
   loadConfig,
   saveConfig,
@@ -20,6 +30,7 @@ export type MousePolicy = "remux" | "tmux";
 export interface OpenTab {
   id: string;
   profileId: string;
+  ephemeralProfile?: Profile;
   state: "idle" | "connecting" | "connected" | "warning" | "error" | "closed";
   bannerMessage?: string;
   rttMs?: number;
@@ -43,7 +54,7 @@ export function pruneWorkspaceForConfig(
   cfg: AppConfig,
 ): { tabs: OpenTab[]; activeTabId: string | null } {
   const validProfileIds = new Set(cfg.profiles.map((p) => p.id));
-  const prunedTabs = tabs.filter((t) => validProfileIds.has(t.profileId));
+  const prunedTabs = tabs.filter((t) => t.ephemeralProfile || validProfileIds.has(t.profileId));
   const prunedActiveTabId = prunedTabs.some((t) => t.id === activeTabId)
     ? activeTabId
     : prunedTabs.length
@@ -134,6 +145,79 @@ function cleanLayout(node: PaneLayout | undefined): PaneLayout | undefined {
   }
 }
 
+export function recoverLeafForEmptyLayout(
+  previousLeaf?: Extract<PaneLayout, { type: "leaf" }> | null,
+  fallbackPaneId?: string,
+): Extract<PaneLayout, { type: "leaf" }> {
+  if (previousLeaf) return { ...previousLeaf, ptyId: null, tmuxIdentity: null };
+  if (fallbackPaneId && fallbackPaneId.trim()) {
+    return { type: "leaf", id: fallbackPaneId, ptyId: null, tmuxIdentity: null };
+  }
+  return { type: "leaf", id: `pane_${crypto.randomUUID()}`, ptyId: null, tmuxIdentity: null };
+}
+
+function warnLayoutRecovery(reason: string) {
+  console.warn(`[REMUX] Recovered malformed persisted layout: ${reason}`);
+}
+
+function firstLeafId(node: PaneLayout | undefined): string | null {
+  if (!node) return null;
+  if (node.type === "leaf") return node.id;
+  for (const child of node.children) {
+    const found = firstLeafId(child);
+    if (found) return found;
+  }
+  return null;
+}
+
+function hasLeafId(node: PaneLayout | undefined, paneId: string | undefined): boolean {
+  if (!node || !paneId) return false;
+  if (node.type === "leaf") return node.id === paneId;
+  return node.children.some((child) => hasLeafId(child, paneId));
+}
+
+export function sanitizePersistedLayout(
+  node: unknown,
+  activePaneId?: string,
+): PaneLayout | undefined {
+  if (!node || typeof node !== "object") {
+    if (activePaneId) warnLayoutRecovery("missing root; recovered active pane id");
+    return activePaneId ? recoverLeafForEmptyLayout(null, activePaneId) : undefined;
+  }
+  const candidate = node as Partial<PaneLayout> & { children?: unknown };
+  if (candidate.type === "leaf") {
+    if (typeof candidate.id === "string" && candidate.id.trim()) {
+      return { type: "leaf", id: candidate.id, ptyId: null, tmuxIdentity: null };
+    }
+    if (activePaneId) warnLayoutRecovery("malformed leaf id; recovered active pane id");
+    return activePaneId ? recoverLeafForEmptyLayout(null, activePaneId) : undefined;
+  }
+  if (candidate.type === "row" || candidate.type === "column") {
+    const rawChildren = Array.isArray(candidate.children) ? candidate.children : [];
+    const children = Array.isArray(candidate.children)
+      ? candidate.children
+          .map((child) => sanitizePersistedLayout(child))
+          .filter((child): child is PaneLayout => Boolean(child))
+      : [];
+    if (children.length < rawChildren.length || !Array.isArray(candidate.children)) {
+      warnLayoutRecovery("pruned malformed branch children");
+    }
+    if (children.length === 0) {
+      if (activePaneId) warnLayoutRecovery("empty branch; recovered active pane id");
+      return activePaneId ? recoverLeafForEmptyLayout(null, activePaneId) : undefined;
+    }
+    return {
+      type: candidate.type,
+      id: typeof candidate.id === "string" && candidate.id.trim()
+        ? candidate.id
+        : `split_${crypto.randomUUID()}`,
+      children,
+    };
+  }
+  if (activePaneId) warnLayoutRecovery("unknown node type; recovered active pane id");
+  return activePaneId ? recoverLeafForEmptyLayout(null, activePaneId) : undefined;
+}
+
 function getWorkspaceStorage(): Pick<Storage, "getItem" | "setItem"> | null {
   if (typeof globalThis === "undefined" || !("localStorage" in globalThis)) {
     return null;
@@ -153,13 +237,15 @@ export function saveWorkspace(tabs: OpenTab[], activeTabId: string | null) {
   const storage = getWorkspaceStorage();
   if (!storage) return;
   try {
-    const persistedTabs = tabs.map((t) => ({
-      id: t.id,
-      profileId: t.profileId,
-      layout: cleanLayout(t.layout),
-      activePaneId: t.activePaneId,
-      mousePolicy: t.mousePolicy ?? "remux",
-    }));
+    const persistedTabs = tabs
+      .filter((t) => !t.ephemeralProfile)
+      .map((t) => ({
+        id: t.id,
+        profileId: t.profileId,
+        layout: cleanLayout(t.layout),
+        activePaneId: t.activePaneId,
+        mousePolicy: t.mousePolicy ?? "remux",
+      }));
     const ws: PersistedWorkspace = {
       tabs: persistedTabs,
       activeTabId,
@@ -178,14 +264,20 @@ function loadWorkspace(): { tabs: OpenTab[]; activeTabId: string | null } {
     if (!raw) return { tabs: [], activeTabId: null };
     const parsed = JSON.parse(raw) as PersistedWorkspace;
     if (!parsed || !Array.isArray(parsed.tabs)) return { tabs: [], activeTabId: null };
-    const hydratedTabs = parsed.tabs.map((t) => ({
-      id: t.id,
-      profileId: t.profileId,
-      state: "idle" as const,
-      layout: t.layout,
-      activePaneId: t.activePaneId,
-      mousePolicy: t.mousePolicy ?? "remux",
-    }));
+    const hydratedTabs = parsed.tabs.map((t) => {
+      const layout = sanitizePersistedLayout(t.layout, t.activePaneId);
+      const activePaneId = hasLeafId(layout, t.activePaneId)
+        ? t.activePaneId
+        : firstLeafId(layout) ?? t.activePaneId;
+      return {
+        id: t.id,
+        profileId: t.profileId,
+        state: "idle" as const,
+        layout,
+        activePaneId,
+        mousePolicy: t.mousePolicy ?? "remux",
+      };
+    });
     return {
       tabs: hydratedTabs,
       activeTabId: parsed.activeTabId,
@@ -219,6 +311,52 @@ export const activeTabIdAtom = atom(
 
 export const tmuxHierarchyAtom = atom<Record<string, TmuxSessionNode[]>>({});
 
+export const paneAgentStateAtom = atom<Record<string, PaneAgentState>>({});
+
+export const markPaneAgentOutputAction = atom(null, (get, set, paneId: string) => {
+  const current = get(paneAgentStateAtom);
+  const next = markAgentOutput(current[paneId], Date.now());
+  if (!next) return;
+  set(paneAgentStateAtom, {
+    ...current,
+    [paneId]: next,
+  });
+});
+
+export const acknowledgePaneAgentDoneAction = atom(null, (get, set, paneId: string) => {
+  const current = get(paneAgentStateAtom);
+  const next = acknowledgeDoneState(current[paneId]);
+  if (!next || next === current[paneId]) return;
+  set(paneAgentStateAtom, {
+    ...current,
+    [paneId]: next,
+  });
+});
+
+export const activateAgentPaneAction = atom(
+  null,
+  (get, set, payload?: { tabId?: string }): string | null => {
+    const tabs = get(openTabsAtom);
+    const targetTabId = payload?.tabId ?? get(activeTabIdAtom);
+    const tab = tabs.find((t) => t.id === targetTabId);
+    if (!tab?.layout) return null;
+
+    const paneId = pickNavigableAgentPane(
+      collectPaneIdsFromLayout(tab.layout),
+      get(paneAgentStateAtom),
+    );
+    if (!paneId) return null;
+
+    set(activeTabIdAtom, tab.id);
+    set(
+      openTabsAtom,
+      tabs.map((t) => (t.id === tab.id ? { ...t, activePaneId: paneId } : t)),
+    );
+    set(acknowledgePaneAgentDoneAction, paneId);
+    return paneId;
+  },
+);
+
 export interface PaneDiagnostics {
   memoryKb?: number;
   heartbeatStatus?: "stable" | "lagging" | "offline";
@@ -235,6 +373,7 @@ export const activeTabAtom = atom((get) => {
 export const activeProfileAtom = atom((get) => {
   const tab = get(activeTabAtom);
   if (!tab) return null;
+  if (tab.ephemeralProfile) return tab.ephemeralProfile;
   return get(profilesAtom).find((p) => p.id === tab.profileId) ?? null;
 });
 
@@ -287,6 +426,14 @@ export const tmuxFallbackRequestAtom = atom<TmuxFallbackRequest | null>(null);
 export const openTabAction = atom(null, (get, set, profileId: string) => {
   const existing = get(openTabsAtom).find((t) => t.profileId === profileId);
   if (existing) {
+    if (existing.state === "error" || existing.state === "warning" || existing.state === "closed" || existing.state === "connecting") {
+      set(
+        openTabsAtom,
+        get(openTabsAtom).map((t) =>
+          t.id === existing.id ? { ...t, state: "idle" as const, bannerMessage: undefined } : t,
+        ),
+      );
+    }
     set(activeTabIdAtom, existing.id);
     return existing.id;
   }
@@ -295,6 +442,44 @@ export const openTabAction = atom(null, (get, set, profileId: string) => {
   const tab: OpenTab = {
     id: tabId,
     profileId,
+    state: "idle",
+    layout: { type: "leaf", id: paneId, ptyId: null },
+    activePaneId: paneId,
+    mousePolicy: "remux",
+  };
+  set(openTabsAtom, [...get(openTabsAtom), tab]);
+  set(activeTabIdAtom, tab.id);
+  return tab.id;
+});
+
+export const openEphemeralTabAction = atom(null, (get, set, profile: Profile) => {
+  const existingSaved = get(profilesAtom).find(
+    (p) =>
+      p.host_id === profile.host_id &&
+      p.tmux_session_name === profile.tmux_session_name &&
+      (p.tmux_window_target || "") === (profile.tmux_window_target || ""),
+  );
+  if (existingSaved) {
+    return set(openTabAction, existingSaved.id);
+  }
+
+  const existing = get(openTabsAtom).find(
+    (t) =>
+      t.ephemeralProfile?.host_id === profile.host_id &&
+      t.ephemeralProfile.tmux_session_name === profile.tmux_session_name &&
+      (t.ephemeralProfile.tmux_window_target || "") === (profile.tmux_window_target || ""),
+  );
+  if (existing) {
+    set(activeTabIdAtom, existing.id);
+    return existing.id;
+  }
+
+  const tabId = `tab_${crypto.randomUUID()}`;
+  const paneId = `pane_${crypto.randomUUID()}`;
+  const tab: OpenTab = {
+    id: tabId,
+    profileId: profile.id,
+    ephemeralProfile: profile,
     state: "idle",
     layout: { type: "leaf", id: paneId, ptyId: null },
     activePaneId: paneId,
@@ -440,6 +625,44 @@ export const addProfileAction = atom(null, async (get, set, profile: Profile) =>
   await saveConfig(next);
 });
 
+export const updateEphemeralProfileAction = atom(
+  null,
+  (get, set, payload: { tabId: string; profile: Profile }) => {
+    set(
+      openTabsAtom,
+      get(openTabsAtom).map((t) =>
+        t.id === payload.tabId
+          ? { ...t, profileId: payload.profile.id, ephemeralProfile: payload.profile }
+          : t,
+      ),
+    );
+  },
+);
+
+export const pinEphemeralTabAction = atom(null, async (get, set, tabId: string) => {
+  const tab = get(openTabsAtom).find((t) => t.id === tabId);
+  if (!tab?.ephemeralProfile) return null;
+
+  const current = get(configAtom);
+  const existing = current.profiles.find((p) => p.id === tab.ephemeralProfile?.id);
+  const nextConfig = existing
+    ? current
+    : { ...current, profiles: [...current.profiles, tab.ephemeralProfile] };
+
+  if (!existing) {
+    set(configAtom, nextConfig);
+    await saveConfig(nextConfig);
+  }
+
+  set(
+    openTabsAtom,
+    get(openTabsAtom).map((t) =>
+      t.id === tabId ? { ...t, profileId: tab.ephemeralProfile!.id, ephemeralProfile: undefined } : t,
+    ),
+  );
+  return tab.ephemeralProfile.id;
+});
+
 export const updateProfileAction = atom(null, async (get, set, profile: Profile) => {
   const current = get(configAtom);
   const next = {
@@ -449,6 +672,53 @@ export const updateProfileAction = atom(null, async (get, set, profile: Profile)
   set(configAtom, next);
   await saveConfig(next);
 });
+
+// Pure helper: rewrite the tmux session target for every profile on `hostId` that
+// targets `fromSession`. Returns a new profiles array when something changed, or
+// null when nothing matched (so callers can skip a redundant save). Per the locked
+// naming decision this only touches the connection target (`tmux_session_name`);
+// the user's `display_alias` is a local label and is never rewritten here.
+export function migrateSessionInProfiles(
+  profiles: Profile[],
+  hostId: string,
+  fromSession: string,
+  toSession: string,
+): Profile[] | null {
+  if (!toSession || fromSession === toSession) return null;
+  let changed = false;
+  const next = profiles.map((p) => {
+    if (p.host_id === hostId && p.tmux_session_name === fromSession) {
+      changed = true;
+      return { ...p, tmux_session_name: toSession };
+    }
+    return p;
+  });
+  return changed ? next : null;
+}
+
+// When a tmux session is renamed, every profile that targets that session on the
+// same host must follow the rename or it silently breaks (next open would
+// attach-or-create a fresh empty session under the stale name).
+export const migrateSessionRenameAction = atom(
+  null,
+  async (
+    get,
+    set,
+    payload: { hostId: string; fromSession: string; toSession: string },
+  ) => {
+    const current = get(configAtom);
+    const nextProfiles = migrateSessionInProfiles(
+      current.profiles,
+      payload.hostId,
+      payload.fromSession,
+      payload.toSession,
+    );
+    if (!nextProfiles) return;
+    const next = { ...current, profiles: nextProfiles };
+    set(configAtom, next);
+    await saveConfig(next);
+  },
+);
 
 export const deleteProfileAction = atom(null, async (get, set, profileId: string) => {
   const current = get(configAtom);
@@ -495,12 +765,30 @@ export const refreshPaneIdentitiesAction = atom(
     };
 
     const indexRef = { current: 0 };
+    const agentState = { ...get(paneAgentStateAtom) };
+    const now = Date.now();
     const nextLayout = updateLayoutWithPaneIdentities(tab.layout, payload.sessionPanes, indexRef);
+    const updateAgentStateFromLayout = (node: PaneLayout) => {
+      if (node.type === "leaf") {
+        const nextAgentState = buildProcessAgentState({
+          command: node.tmuxIdentity?.paneCurrentCommand,
+          previous: agentState[node.id],
+          now,
+        });
+        if (nextAgentState) {
+          agentState[node.id] = nextAgentState;
+        }
+        return;
+      }
+      node.children.forEach(updateAgentStateFromLayout);
+    };
+    updateAgentStateFromLayout(nextLayout);
 
     set(
       openTabsAtom,
       tabs.map((t) => (t.id === payload.tabId ? { ...t, layout: nextLayout } : t))
     );
+    set(paneAgentStateAtom, agentState);
   }
 );
 
@@ -617,8 +905,12 @@ export const closePaneAction = atom(
   },
 );
 
-function buildEvenGrid(leaves: PaneLayout[], direction: "row" | "column" = "column"): PaneLayout {
-  if (leaves.length === 0) return { type: "leaf", id: `pane_${crypto.randomUUID()}`, ptyId: null };
+function buildEvenGrid(
+  leaves: PaneLayout[],
+  direction: "row" | "column" = "column",
+  previousLeaf?: Extract<PaneLayout, { type: "leaf" }> | null,
+): PaneLayout {
+  if (leaves.length === 0) return recoverLeafForEmptyLayout(previousLeaf);
   if (leaves.length === 1) return leaves[0];
   const mid = Math.ceil(leaves.length / 2);
   const leftLeaves = leaves.slice(0, mid);
@@ -634,8 +926,8 @@ function buildEvenGrid(leaves: PaneLayout[], direction: "row" | "column" = "colu
   };
 }
 
-function buildMainLeft(leaves: PaneLayout[]): PaneLayout {
-  if (leaves.length === 0) return { type: "leaf", id: `pane_${crypto.randomUUID()}`, ptyId: null };
+function buildMainLeft(leaves: PaneLayout[], previousLeaf?: Extract<PaneLayout, { type: "leaf" }> | null): PaneLayout {
+  if (leaves.length === 0) return recoverLeafForEmptyLayout(previousLeaf);
   if (leaves.length === 1) return leaves[0];
   const first = leaves[0];
   const rest = leaves.slice(1);
@@ -656,8 +948,8 @@ function buildMainLeft(leaves: PaneLayout[]): PaneLayout {
   };
 }
 
-function buildMainTop(leaves: PaneLayout[]): PaneLayout {
-  if (leaves.length === 0) return { type: "leaf", id: `pane_${crypto.randomUUID()}`, ptyId: null };
+function buildMainTop(leaves: PaneLayout[], previousLeaf?: Extract<PaneLayout, { type: "leaf" }> | null): PaneLayout {
+  if (leaves.length === 0) return recoverLeafForEmptyLayout(previousLeaf);
   if (leaves.length === 1) return leaves[0];
   const first = leaves[0];
   const rest = leaves.slice(1);

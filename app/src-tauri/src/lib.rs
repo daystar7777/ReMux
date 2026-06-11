@@ -1,20 +1,22 @@
 mod config;
+mod keyring_bridge;
 mod pty;
 mod ssh;
+mod ssh_config;
 mod tmux;
 mod types;
-mod keyring_bridge;
-mod ssh_config;
-
 
 use crate::pty::{PtyEvent, PtyManager, SpawnOptions};
-use crate::ssh::{build_ssh_argv, build_ssh_probe_argv, build_ssh_remote_command_argv, SshLaunchArgs};
+use crate::ssh::{
+    build_ssh_argv, build_ssh_probe_argv, build_ssh_remote_command_argv, SshLaunchArgs,
+};
 use crate::tmux::{
-    build_attach_or_create, build_hierarchy, build_kill_pane, build_list_panes,
-    build_rename_pane, build_rename_window, build_select_layout, build_select_pane, build_set_mouse, build_set_mouse_legacy, build_split_pane, build_zoom_pane,
-    build_new_window, build_kill_window,
-    detect_local_version, list_local_panes, parse_pane_row, AttachArgs, TmuxPaneIdentity,
-    TmuxSessionNode, TmuxVersion, with_tmux_prefix,
+    build_attach_or_create, build_hierarchy, build_kill_pane, build_kill_window, build_list_panes,
+    build_new_window, build_rename_pane, build_rename_session, build_rename_window,
+    build_resize_pane, build_select_layout, build_select_pane, build_set_mouse,
+    build_set_mouse_legacy, build_split_pane, build_zoom_pane, detect_local_version,
+    list_local_panes, parse_pane_row, with_tmux_prefix, AttachArgs, TmuxPaneIdentity,
+    TmuxSessionNode, TmuxVersion,
 };
 use crate::types::AppConfig;
 use serde::Serialize;
@@ -56,9 +58,8 @@ async fn pty_spawn_local(
     rows: u16,
     channel: Channel<PtyEvent>,
 ) -> Result<String, String> {
-    let shell = shell.unwrap_or_else(|| {
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
-    });
+    let shell =
+        shell.unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string()));
     let opts = SpawnOptions {
         cwd,
         ..Default::default()
@@ -157,7 +158,15 @@ async fn pty_write(
 
 #[tauri::command]
 fn log_debug(msg: String) {
-    log::debug!("[FRONTEND] {}", msg);
+    log::info!("[FRONTEND] {}", msg);
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/Users/storysq/REMUX/app/debug.log")
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "{}", msg);
+    }
 }
 
 #[tauri::command]
@@ -234,9 +243,7 @@ async fn tmux_list_remote_panes(
     let mut cmd = tokio::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]);
     hide_tokio_window(&mut cmd);
-    let output = cmd.output()
-        .await
-        .map_err(|e| e.to_string())?;
+    let output = cmd.output().await.map_err(|e| e.to_string())?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
@@ -248,8 +255,7 @@ fn run_local_tmux_command(argv: Vec<String>) -> Result<(), String> {
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]);
     hide_window(&mut cmd);
-    let output = cmd.output()
-        .map_err(|e| e.to_string())?;
+    let output = cmd.output().map_err(|e| e.to_string())?;
     if output.status.success() {
         Ok(())
     } else {
@@ -261,9 +267,7 @@ async fn run_remote_tmux_command(argv: Vec<String>) -> Result<(), String> {
     let mut cmd = tokio::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]);
     hide_tokio_window(&mut cmd);
-    let output = cmd.output()
-        .await
-        .map_err(|e| e.to_string())?;
+    let output = cmd.output().await.map_err(|e| e.to_string())?;
     if output.status.success() {
         Ok(())
     } else {
@@ -292,7 +296,11 @@ async fn tmux_kill_local_pane(
     binary: Option<String>,
     socket_path: Option<String>,
 ) -> Result<(), String> {
-    run_local_tmux_command(build_kill_pane(binary.as_deref(), socket_path.as_deref(), &target))
+    run_local_tmux_command(build_kill_pane(
+        binary.as_deref(),
+        socket_path.as_deref(),
+        &target,
+    ))
 }
 
 #[tauri::command]
@@ -301,7 +309,11 @@ async fn tmux_select_local_pane(
     binary: Option<String>,
     socket_path: Option<String>,
 ) -> Result<(), String> {
-    run_local_tmux_command(build_select_pane(binary.as_deref(), socket_path.as_deref(), &target))
+    run_local_tmux_command(build_select_pane(
+        binary.as_deref(),
+        socket_path.as_deref(),
+        &target,
+    ))
 }
 
 #[tauri::command]
@@ -310,7 +322,28 @@ async fn tmux_zoom_local_pane(
     binary: Option<String>,
     socket_path: Option<String>,
 ) -> Result<(), String> {
-    run_local_tmux_command(build_zoom_pane(binary.as_deref(), socket_path.as_deref(), &target))
+    run_local_tmux_command(build_zoom_pane(
+        binary.as_deref(),
+        socket_path.as_deref(),
+        &target,
+    ))
+}
+
+#[tauri::command]
+async fn tmux_resize_local_pane(
+    target: String,
+    direction: String,
+    amount: u16,
+    binary: Option<String>,
+    socket_path: Option<String>,
+) -> Result<(), String> {
+    run_local_tmux_command(build_resize_pane(
+        binary.as_deref(),
+        socket_path.as_deref(),
+        &target,
+        &direction,
+        amount,
+    )?)
 }
 
 #[tauri::command]
@@ -336,6 +369,21 @@ async fn tmux_rename_local_window(
     socket_path: Option<String>,
 ) -> Result<(), String> {
     run_local_tmux_command(build_rename_window(
+        binary.as_deref(),
+        socket_path.as_deref(),
+        &target,
+        &name,
+    ))
+}
+
+#[tauri::command]
+async fn tmux_rename_local_session(
+    target: String,
+    name: String,
+    binary: Option<String>,
+    socket_path: Option<String>,
+) -> Result<(), String> {
+    run_local_tmux_command(build_rename_session(
         binary.as_deref(),
         socket_path.as_deref(),
         &target,
@@ -386,14 +434,12 @@ async fn tmux_set_local_mouse(
             let _ = run_local_tmux_command(refresh_cmd);
             Ok(())
         }
-        Err(e) if e.contains("unknown option") || e.contains("bad option") || e.contains("mouse") => {
+        Err(e)
+            if e.contains("unknown option") || e.contains("bad option") || e.contains("mouse") =>
+        {
             // Fallback to legacy mouse options for tmux < 2.1
-            let legacy_cmds = build_set_mouse_legacy(
-                binary.as_deref(),
-                socket_path.as_deref(),
-                &target,
-                enabled,
-            );
+            let legacy_cmds =
+                build_set_mouse_legacy(binary.as_deref(), socket_path.as_deref(), &target, enabled);
             for cmd in legacy_cmds {
                 let _ = run_local_tmux_command(cmd);
             }
@@ -555,6 +601,43 @@ async fn tmux_zoom_remote_pane(
 }
 
 #[tauri::command]
+async fn tmux_resize_remote_pane(
+    host: String,
+    user: Option<String>,
+    port: Option<u16>,
+    ssh_config_alias: Option<String>,
+    key_path: Option<String>,
+    proxy_jump: Option<String>,
+    identity_agent: Option<String>,
+    target: String,
+    direction: String,
+    amount: u16,
+    tmux_binary: Option<String>,
+    socket_path: Option<String>,
+    skip_host_key_check: Option<bool>,
+) -> Result<(), String> {
+    let remote = build_resize_pane(
+        tmux_binary.as_deref(),
+        socket_path.as_deref(),
+        &target,
+        &direction,
+        amount,
+    )?;
+    run_remote_tmux_command(build_remote_tmux_op(
+        &host,
+        user.as_deref(),
+        port,
+        ssh_config_alias.as_deref(),
+        key_path.as_deref(),
+        proxy_jump.as_deref(),
+        identity_agent.as_deref(),
+        remote,
+        skip_host_key_check.unwrap_or(false),
+    ))
+    .await
+}
+
+#[tauri::command]
 async fn tmux_select_remote_pane(
     host: String,
     user: Option<String>,
@@ -634,6 +717,41 @@ async fn tmux_rename_remote_window(
     skip_host_key_check: Option<bool>,
 ) -> Result<(), String> {
     let remote = build_rename_window(
+        tmux_binary.as_deref(),
+        socket_path.as_deref(),
+        &target,
+        &name,
+    );
+    run_remote_tmux_command(build_remote_tmux_op(
+        &host,
+        user.as_deref(),
+        port,
+        ssh_config_alias.as_deref(),
+        key_path.as_deref(),
+        proxy_jump.as_deref(),
+        identity_agent.as_deref(),
+        remote,
+        skip_host_key_check.unwrap_or(false),
+    ))
+    .await
+}
+
+#[tauri::command]
+async fn tmux_rename_remote_session(
+    host: String,
+    user: Option<String>,
+    port: Option<u16>,
+    ssh_config_alias: Option<String>,
+    key_path: Option<String>,
+    proxy_jump: Option<String>,
+    identity_agent: Option<String>,
+    target: String,
+    name: String,
+    tmux_binary: Option<String>,
+    socket_path: Option<String>,
+    skip_host_key_check: Option<bool>,
+) -> Result<(), String> {
+    let remote = build_rename_session(
         tmux_binary.as_deref(),
         socket_path.as_deref(),
         &target,
@@ -747,7 +865,9 @@ async fn tmux_set_remote_mouse(
             let _ = run_remote_tmux_command(op_refresh).await;
             Ok(())
         }
-        Err(e) if e.contains("unknown option") || e.contains("bad option") || e.contains("mouse") => {
+        Err(e)
+            if e.contains("unknown option") || e.contains("bad option") || e.contains("mouse") =>
+        {
             // Fallback to legacy mouse options for tmux < 2.1
             let legacy_cmds = build_set_mouse_legacy(
                 tmux_binary.as_deref(),
@@ -909,9 +1029,7 @@ async fn probe_remote_env(
     let mut cmd = tokio::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]);
     hide_tokio_window(&mut cmd);
-    let output = cmd.output()
-        .await
-        .map_err(|e| e.to_string())?;
+    let output = cmd.output().await.map_err(|e| e.to_string())?;
     if !output.status.success() {
         return Err(format!(
             "remote probe failed: {}",
@@ -1062,9 +1180,7 @@ async fn check_key_permissions(key_path: String) -> Result<bool, String> {
 
     #[cfg(windows)]
     {
-        let output = std::process::Command::new("icacls")
-            .arg(&key_path)
-            .output();
+        let output = std::process::Command::new("icacls").arg(&key_path).output();
         match output {
             Ok(out) if out.status.success() => {
                 let stdout_str = String::from_utf8_lossy(&out.stdout);
@@ -1076,8 +1192,6 @@ async fn check_key_permissions(key_path: String) -> Result<bool, String> {
         }
     }
 }
-
-
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1122,13 +1236,10 @@ async fn test_connection(
     let mut cmd = tokio::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]);
     hide_tokio_window(&mut cmd);
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(8),
-        cmd.output(),
-    )
-    .await
-    .map_err(|_| "ssh probe timed out".to_string())?
-    .map_err(|e| e.to_string())?;
+    let output = tokio::time::timeout(std::time::Duration::from_secs(8), cmd.output())
+        .await
+        .map_err(|_| "ssh probe timed out".to_string())?
+        .map_err(|e| e.to_string())?;
     let rtt_ms = start.elapsed().as_millis().min(u32::MAX as u128) as u32;
 
     if output.status.success() {
@@ -1242,7 +1353,10 @@ async fn get_process_memory(
     }
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
-    let kb = stdout_str.trim().parse::<u64>().map_err(|e| e.to_string())?;
+    let kb = stdout_str
+        .trim()
+        .parse::<u64>()
+        .map_err(|e| e.to_string())?;
     Ok(kb)
 }
 
@@ -1306,8 +1420,10 @@ pub fn run() {
             tmux_kill_local_pane,
             tmux_select_local_pane,
             tmux_zoom_local_pane,
+            tmux_resize_local_pane,
             tmux_select_local_layout,
             tmux_rename_local_window,
+            tmux_rename_local_session,
             tmux_rename_local_pane,
             tmux_set_local_mouse,
             tmux_new_local_window,
@@ -1315,8 +1431,10 @@ pub fn run() {
             tmux_split_remote_pane,
             tmux_kill_remote_pane,
             tmux_zoom_remote_pane,
+            tmux_resize_remote_pane,
             tmux_select_remote_pane,
             tmux_rename_remote_window,
+            tmux_rename_remote_session,
             tmux_select_remote_layout,
             tmux_rename_remote_pane,
             tmux_set_remote_mouse,

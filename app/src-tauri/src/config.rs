@@ -84,7 +84,11 @@ fn validate_host(h: &Host) -> Result<()> {
         }
         if h.auth_method == AuthMethod::Keyfile
             && h.key_path.as_deref().unwrap_or("").trim().is_empty()
-            && h.ssh_config_alias.as_deref().unwrap_or("").trim().is_empty()
+            && h.ssh_config_alias
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .is_empty()
         {
             return Err(anyhow!(
                 "host.key_path or ssh_config_alias required for keyfile auth"

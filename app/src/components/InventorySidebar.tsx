@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useAtom, useAtomValue } from "jotai";
-import { ChevronRight, ChevronDown, Terminal, Layers, Folder, RefreshCw, Plus, SquarePen, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ChevronRight, ChevronDown, Terminal, Layers, Folder, RefreshCw, Plus, SquarePen, Tag, Trash2 } from "lucide-react";
 import {
   activeTabAtom,
   activeHostAtom,
@@ -9,20 +9,27 @@ import {
   tmuxHierarchyAtom,
 } from "../state/atoms";
 import { tmuxProbeHierarchy } from "../lib/ipc";
+import type { TmuxResizeDirection } from "../lib/ipc";
 
 interface InventorySidebarProps {
-  onAttachToTarget: (sessionName: string, windowName?: string) => void;
+  onAttachToTarget: (sessionName: string, windowTarget?: string) => void;
   onNewWindow?: (sessionName: string) => void;
+  onRenameSession?: (sessionName: string) => void;
   onKillWindow?: (sessionName: string, windowId: string, windowName: string) => void;
   onRenameWindow?: (sessionName: string, windowId: string, windowName: string) => void;
-  onSelectPane?: (sessionName: string, windowName: string, paneId: string, paneIndex: number) => void;
+  onRenamePane?: (sessionName: string, windowName: string, paneId: string, currentTitle: string) => void;
+  onResizePane?: (paneId: string, direction: TmuxResizeDirection, amount?: number) => void;
+  onSelectPane?: (sessionName: string, windowTarget: string, paneId: string, paneIndex: number) => void;
 }
 
 export const InventorySidebar: React.FC<InventorySidebarProps> = ({
   onAttachToTarget,
   onNewWindow,
+  onRenameSession,
   onKillWindow,
   onRenameWindow,
+  onRenamePane,
+  onResizePane,
   onSelectPane,
 }) => {
   const [collapsed, setCollapsed] = useAtom(inventorySidebarCollapsedAtom);
@@ -216,8 +223,22 @@ export const InventorySidebar: React.FC<InventorySidebarProps> = ({
                       }}
                     />
                   )}
-                  {onNewWindow && (
+                  {(onNewWindow || onRenameSession) && (
                     <div className="tree-node-actions">
+                      {onRenameSession && (
+                        <button
+                          className="tree-node-btn"
+                          title="Rename Screen"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            onRenameSession(session.sessionName);
+                          }}
+                        >
+                          <SquarePen size={11} />
+                        </button>
+                      )}
+                      {onNewWindow && (
                       <button
                         className="tree-node-btn"
                         title="New Window"
@@ -229,6 +250,7 @@ export const InventorySidebar: React.FC<InventorySidebarProps> = ({
                       >
                         <Plus size={11} />
                       </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -238,8 +260,13 @@ export const InventorySidebar: React.FC<InventorySidebarProps> = ({
                   <div style={{ paddingLeft: "14px", display: "flex", flexDirection: "column", gap: "2px" }}>
                     {session.windows.map((window) => {
                       const isWindowCollapsed = !!collapsedNodes[`w_${window.windowId}`];
+                      const activeWindowTarget = activeProfile?.tmux_window_target || "";
+                      const windowTarget = window.windowId || String(window.windowIndex);
                       const isWindowActive =
-                        isSessionActive && activeProfile?.tmux_window_target === window.windowName;
+                        isSessionActive &&
+                        (activeWindowTarget === window.windowId ||
+                          activeWindowTarget === String(window.windowIndex) ||
+                          activeWindowTarget === window.windowName);
 
                       return (
                         <div key={window.windowId} style={{ display: "flex", flexDirection: "column" }}>
@@ -251,9 +278,9 @@ export const InventorySidebar: React.FC<InventorySidebarProps> = ({
                                 ...prev,
                                 [`w_${window.windowId}`]: !prev[`w_${window.windowId}`],
                               }));
-                              onAttachToTarget(session.sessionName, window.windowName);
+                              onAttachToTarget(session.sessionName, windowTarget);
                             }}
-                            onDoubleClick={() => onAttachToTarget(session.sessionName, window.windowName)}
+                            onDoubleClick={() => onAttachToTarget(session.sessionName, windowTarget)}
                             style={{
                               display: "flex",
                               alignItems: "center",
@@ -358,7 +385,7 @@ export const InventorySidebar: React.FC<InventorySidebarProps> = ({
                                     onClick={() => {
                                       onSelectPane?.(
                                         session.sessionName,
-                                        window.windowName,
+                                        windowTarget,
                                         pane.paneId,
                                         pane.paneIndex
                                       );
@@ -374,6 +401,7 @@ export const InventorySidebar: React.FC<InventorySidebarProps> = ({
                                       gap: "6px",
                                       transition: "all 0.15s ease",
                                       userSelect: "none",
+                                      position: "relative",
                                     }}
                                   >
                                     <Terminal size={10} style={{ color: isPaneFocused ? "var(--accent)" : "var(--fg-3)" }} />
@@ -392,6 +420,44 @@ export const InventorySidebar: React.FC<InventorySidebarProps> = ({
                                         PID {pane.panePid}
                                       </span>
                                     )}
+                                    <div className="tree-node-actions">
+                                      {onRenamePane && (
+                                        <button
+                                          className="tree-node-btn"
+                                          title="Rename Pane"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            e.preventDefault();
+                                            onRenamePane(session.sessionName, window.windowName, pane.paneId, pane.paneTitle || "");
+                                          }}
+                                        >
+                                          <Tag size={10} />
+                                        </button>
+                                      )}
+                                      {onResizePane && (
+                                        <>
+                                          {([
+                                            ["left", ArrowLeft],
+                                            ["right", ArrowRight],
+                                            ["up", ArrowUp],
+                                            ["down", ArrowDown],
+                                          ] as const).map(([direction, Icon]) => (
+                                            <button
+                                              key={direction}
+                                              className="tree-node-btn"
+                                              title={`Resize pane ${direction}`}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                e.preventDefault();
+                                                onResizePane(pane.paneId, direction, 5);
+                                              }}
+                                            >
+                                              <Icon size={10} />
+                                            </button>
+                                          ))}
+                                        </>
+                                      )}
+                                    </div>
                                   </div>
                                 );
                               })}

@@ -33,13 +33,16 @@ import {
   hydrateConfigAction,
   inputBroadcastAtom,
   localeWarningAtom,
+  markPaneAgentOutputAction,
   mousePolicyAtom,
   openTabsAtom,
   PaneLayout,
   profilesAtom,
   tmuxFallbackRequestAtom,
+  migrateSessionRenameAction,
   tmuxHierarchyAtom,
   tmuxVersionLabelAtom,
+  updateEphemeralProfileAction,
   updateProfileAction,
   updateTabAction,
   viewModeAtom,
@@ -69,19 +72,24 @@ import {
   tmuxProbeHierarchy,
   type TmuxPaneIdentity,
   type TmuxLayoutPreset,
+  type TmuxResizeDirection,
   tmuxSplitLocalPane,
   tmuxKillLocalPane,
   tmuxSelectLocalPane,
   tmuxZoomLocalPane,
+  tmuxResizeLocalPane,
   tmuxSelectLocalLayout,
   tmuxSplitRemotePane,
   tmuxKillRemotePane,
   tmuxSelectRemotePane,
   tmuxZoomRemotePane,
+  tmuxResizeRemotePane,
   tmuxSelectRemoteLayout,
   tmuxRenameLocalPane,
+  tmuxRenameLocalSession,
   tmuxRenameLocalWindow,
   tmuxRenameRemotePane,
+  tmuxRenameRemoteSession,
   tmuxRenameRemoteWindow,
   tmuxSetLocalMouse,
   tmuxSetRemoteMouse,
@@ -123,11 +131,23 @@ interface SessionBinding {
 }
 
 interface RenameWindowRequest {
-  kind: "window" | "pane" | "window-direct";
+  kind: "window" | "pane" | "window-direct" | "pane-direct" | "session-direct";
   paneId?: string;
   target?: string;
   currentName: string;
   identityLabel: string;
+}
+
+function tmuxWindowMatchesTarget(pane: TmuxPaneIdentity, target?: string): boolean {
+  if (!target) return true;
+  if (target.startsWith("@")) return pane.windowId === target;
+  if (/^\d+$/.test(target)) return pane.windowIndex === parseInt(target, 10);
+  return pane.windowName === target;
+}
+
+function tmuxWindowTargetEquals(currentTarget: string | undefined, windowName: string): boolean {
+  if (!currentTarget) return false;
+  return currentTarget === windowName;
 }
 
 const remoteSshArgs = (host: Host) => ({
@@ -173,7 +193,10 @@ export default function App() {
   const setHierarchyRecord = useSetAtom(tmuxHierarchyAtom);
   const setDiagnostics = useSetAtom(diagnosticsAtom);
   const updateProfile = useSetAtom(updateProfileAction);
+  const updateEphemeralProfile = useSetAtom(updateEphemeralProfileAction);
+  const migrateSessionRename = useSetAtom(migrateSessionRenameAction);
   const refreshPaneIdentities = useSetAtom(refreshPaneIdentitiesAction);
+  const markPaneAgentOutput = useSetAtom(markPaneAgentOutputAction);
   const setClipboard = useSetAtom(clipboardAtom);
 
   const [, setSidebarCollapsed] = useAtom(sidebarCollapsedAtom);
@@ -183,7 +206,7 @@ export default function App() {
   const hierarchyInterval = useAtomValue(hierarchyIntervalAtom);
   const [mousePolicy, setMousePolicy] = useAtom(mousePolicyAtom);
   const prevMousePolicyRef = useRef<Map<string, string>>(new Map());
-  const pendingPaneFocusRef = useRef<{ sessionName: string; windowName: string; paneId: string } | null>(null);
+  const pendingPaneFocusRef = useRef<{ sessionName: string; windowTarget: string; paneId: string } | null>(null);
 
   const termHandlesRef = useRef<Map<string, TerminalHandle>>(new Map());
   const viewModeRef = useRef(viewMode);
@@ -488,7 +511,7 @@ export default function App() {
             });
       const matching = panes.filter((pane) => {
         if (pane.sessionName !== activeProfile.tmux_session_name) return false;
-        if (activeProfile.tmux_window_target && pane.windowName !== activeProfile.tmux_window_target) return false;
+        if (!tmuxWindowMatchesTarget(pane, activeProfile.tmux_window_target)) return false;
         return true;
       });
       return matching.length === 1 ? matching[0] : null;
@@ -508,7 +531,7 @@ export default function App() {
       console.warn(`[launchSession] Tab ${tabId} not found, aborting`);
       return false;
     }
-    const targetProfile = profiles.find((p) => p.id === currentTab.profileId);
+    const targetProfile = profiles.find((p) => p.id === currentTab.profileId) ?? currentTab.ephemeralProfile;
     const targetHost = targetProfile ? hosts.find((h) => h.id === targetProfile.host_id) : null;
 
     if (!targetProfile || !targetHost) {
@@ -712,6 +735,7 @@ export default function App() {
           // which manifests as a blank terminal.
           const handle = termHandlesRef.current.get(paneId);
           handle?.write(evt.data);
+          markPaneAgentOutput(paneId);
 
           if (!isLocalConnection) {
             const currentTab = tabsRef.current.find((t) => t.id === tabId);
@@ -755,7 +779,7 @@ export default function App() {
                 ptyDataBuffer.toLowerCase().includes("\x1b[?1049h") ||
                 lowerClean.includes("tmux");
 
-              if (isPrompt) {
+              if (isPrompt && targetHost.auth_method === "password") {
                 if (!seenInteractivePrompt) {
                   console.log(`[launchSession] Interactive prompt detected in PTY stream`);
                 }
@@ -1143,10 +1167,7 @@ export default function App() {
       let sessionPanes = allPanes.filter((pane) => pane.sessionName === activeProfile.tmux_session_name);
       if (activeProfile.tmux_window_target) {
         const target = activeProfile.tmux_window_target;
-        sessionPanes = sessionPanes.filter((pane) => {
-          if (/^\d+$/.test(target)) return pane.windowIndex === parseInt(target, 10);
-          return pane.windowName === target;
-        });
+        sessionPanes = sessionPanes.filter((pane) => tmuxWindowMatchesTarget(pane, target));
       }
       sessionPanes.sort((a, b) => a.paneIndex - b.paneIndex);
       refreshPaneIdentities({ tabId: activeTab.id, sessionPanes });
@@ -1506,6 +1527,51 @@ export default function App() {
     }
   };
 
+  const submitRenamePaneDirect = async (target: string, nextTitle: string) => {
+    if (!activeTab || !activeHost) return;
+    try {
+      if (activeHost.auth_method === "local") {
+        await tmuxRenameLocalPane({
+          target,
+          title: nextTitle,
+          binary: activeHost.custom_tmux_binary || undefined,
+          socketPath: activeHost.tmux_socket_path || undefined,
+        });
+      } else if (!supportsNativeTmuxCommands(activeHost)) {
+        setRenameWindowReq(null);
+        updateTab({
+          id: activeTab.id,
+          patch: {
+            bannerMessage:
+              nativeTmuxDisabledReasonForActiveHost("Remote pane title rename") ||
+              "Remote pane title rename is unavailable for this host.",
+          },
+        });
+        return;
+      } else {
+        await tmuxRenameRemotePane({
+          ...remoteSshArgs(activeHost),
+          target,
+          title: nextTitle,
+          tmuxBinary: activeHost.custom_tmux_binary || undefined,
+          socketPath: activeHost.tmux_socket_path || undefined,
+        });
+      }
+
+      setRenameWindowReq(null);
+      updateTab({ id: activeTab.id, patch: { bannerMessage: undefined } });
+      window.setTimeout(() => {
+        void refreshActiveTmuxState();
+      }, 250);
+    } catch (err) {
+      console.warn("Failed to rename tmux pane", err);
+      updateTab({
+        id: activeTab.id,
+        patch: { bannerMessage: `Pane title rename failed: ${String(err)}` },
+      });
+    }
+  };
+
   const submitRenameWindowDirect = async (target: string, nextName: string) => {
     if (!activeTab || !activeHost) return;
     try {
@@ -1550,6 +1616,59 @@ export default function App() {
     }
   };
 
+  const submitRenameSessionDirect = async (target: string, nextName: string) => {
+    if (!activeTab || !activeHost) return;
+    try {
+      if (activeHost.auth_method === "local") {
+        await tmuxRenameLocalSession({
+          target,
+          name: nextName,
+          binary: activeHost.custom_tmux_binary || undefined,
+          socketPath: activeHost.tmux_socket_path || undefined,
+        });
+      } else if (!supportsNativeTmuxCommands(activeHost)) {
+        updateTab({
+          id: activeTab.id,
+          patch: {
+            bannerMessage:
+              nativeTmuxDisabledReasonForActiveHost("Remote session rename") ||
+              "Remote session rename is unavailable for this host.",
+          },
+        });
+        return;
+      } else {
+        await tmuxRenameRemoteSession({
+          ...remoteSshArgs(activeHost),
+          target,
+          name: nextName,
+          tmuxBinary: activeHost.custom_tmux_binary || undefined,
+          socketPath: activeHost.tmux_socket_path || undefined,
+        });
+      }
+
+      // Migrate every profile on this host that targets the renamed session, not
+      // just the active one, so siblings don't go stale. display_alias is left
+      // untouched (it is the user's local label, per the locked naming decision).
+      await migrateSessionRename({
+        hostId: activeHost.id,
+        fromSession: target,
+        toSession: nextName,
+      });
+
+      setRenameWindowReq(null);
+      updateTab({ id: activeTab.id, patch: { bannerMessage: undefined } });
+      window.setTimeout(() => {
+        void refreshActiveTmuxState();
+      }, 250);
+    } catch (err) {
+      console.warn("Failed to rename tmux session", err);
+      updateTab({
+        id: activeTab.id,
+        patch: { bannerMessage: `Session rename failed: ${String(err)}` },
+      });
+    }
+  };
+
   const handleRenameWindowDirect = (sessionName: string, windowId: string, currentName: string) => {
     setRenameWindowReq({
       kind: "window-direct",
@@ -1557,6 +1676,96 @@ export default function App() {
       currentName,
       identityLabel: `${sessionName}:${windowId}`,
     });
+  };
+
+  const handleRenameSessionDirect = (sessionName: string) => {
+    setRenameWindowReq({
+      kind: "session-direct",
+      target: sessionName,
+      currentName: sessionName,
+      identityLabel: sessionName,
+    });
+  };
+
+  const handleRenamePaneDirect = (
+    sessionName: string,
+    windowName: string,
+    paneId: string,
+    currentTitle: string,
+  ) => {
+    setRenameWindowReq({
+      kind: "pane-direct",
+      target: paneId,
+      currentName: currentTitle,
+      identityLabel: `${sessionName}:${windowName}.${paneId}`,
+    });
+  };
+
+  const handleResizePane = async (
+    paneId: string,
+    direction: TmuxResizeDirection,
+    amount = 5,
+  ) => {
+    if (!activeTab || !activeHost || !activeTab.layout) return;
+    const leafNode = findLeafNode(activeTab.layout, paneId);
+    const target = leafNode?.tmuxIdentity?.paneId;
+    if (!target) {
+      updateTab({
+        id: activeTab.id,
+        patch: { bannerMessage: "Pane resize requires a known native tmux pane identity." },
+      });
+      return;
+    }
+    await handleResizePaneDirect(target, direction, amount);
+  };
+
+  const handleResizePaneDirect = async (
+    target: string,
+    direction: TmuxResizeDirection,
+    amount = 5,
+  ) => {
+    if (!activeTab || !activeHost) return;
+    try {
+      if (activeHost.auth_method === "local") {
+        await tmuxResizeLocalPane({
+          target,
+          direction,
+          amount,
+          binary: activeHost.custom_tmux_binary || undefined,
+          socketPath: activeHost.tmux_socket_path || undefined,
+        });
+      } else if (!supportsNativeTmuxCommands(activeHost)) {
+        updateTab({
+          id: activeTab.id,
+          patch: {
+            bannerMessage:
+              nativeTmuxDisabledReasonForActiveHost("Remote pane resize") ||
+              "Remote pane resize is unavailable for this host.",
+          },
+        });
+        return;
+      } else {
+        await tmuxResizeRemotePane({
+          ...remoteSshArgs(activeHost),
+          target,
+          direction,
+          amount,
+          tmuxBinary: activeHost.custom_tmux_binary || undefined,
+          socketPath: activeHost.tmux_socket_path || undefined,
+        });
+      }
+
+      updateTab({ id: activeTab.id, patch: { bannerMessage: undefined } });
+      window.setTimeout(() => {
+        void refreshActiveTmuxState();
+      }, 120);
+    } catch (err) {
+      console.warn("Failed to resize tmux pane", err);
+      updateTab({
+        id: activeTab.id,
+        patch: { bannerMessage: `Pane resize failed: ${String(err)}` },
+      });
+    }
   };
 
   const handleNewWindow = async (sessionName: string) => {
@@ -1650,19 +1859,20 @@ export default function App() {
 
   const handleSelectPane = async (
     sessionName: string,
-    windowName: string,
+    windowTarget: string,
     paneId: string,
     _paneIndex: number
   ) => {
     if (!activeTab || !activeProfile || !activeHost) return;
 
     const isSessionActive = activeProfile.tmux_session_name === sessionName;
-    const isWindowActive = isSessionActive && activeProfile.tmux_window_target === windowName;
+    const isWindowActive =
+      isSessionActive && tmuxWindowTargetEquals(activeProfile.tmux_window_target, windowTarget);
 
     // 1. If not connected to this session or window, attach to it!
     if (!isSessionActive || !isWindowActive) {
-      pendingPaneFocusRef.current = { sessionName, windowName, paneId };
-      await handleAttachToTarget(sessionName, windowName);
+      pendingPaneFocusRef.current = { sessionName, windowTarget, paneId };
+      await handleAttachToTarget(sessionName, windowTarget);
       return;
     } else {
       pendingPaneFocusRef.current = null;
@@ -1984,12 +2194,7 @@ export default function App() {
 
         if (activeProfile.tmux_window_target) {
           const target = activeProfile.tmux_window_target;
-          sessionPanes = sessionPanes.filter((p) => {
-            if (/^\d+$/.test(target)) {
-              return p.windowIndex === parseInt(target, 10);
-            }
-            return p.windowName === target;
-          });
+          sessionPanes = sessionPanes.filter((p) => tmuxWindowMatchesTarget(p, target));
         }
 
         sessionPanes.sort((a, b) => a.paneIndex - b.paneIndex);
@@ -2040,11 +2245,11 @@ export default function App() {
   useEffect(() => {
     if (!activeTab || activeTab.state !== "connected" || !activeTab.layout) return;
     if (pendingPaneFocusRef.current) {
-      const { sessionName, windowName, paneId } = pendingPaneFocusRef.current;
+      const { sessionName, windowTarget, paneId } = pendingPaneFocusRef.current;
       
       if (
         activeProfile?.tmux_session_name === sessionName &&
-        activeProfile?.tmux_window_target === windowName
+        tmuxWindowTargetEquals(activeProfile?.tmux_window_target, windowTarget)
       ) {
         const findMatchingLeafId = (node: PaneLayout): string | null => {
           if (node.type === "leaf") {
@@ -2135,14 +2340,18 @@ export default function App() {
     void syncMousePolicy();
   }, [activeTab?.id, activeHost, activeProfile, mousePolicy]);
 
-  const handleAttachToTarget = async (sessionName: string, windowName?: string) => {
+  const handleAttachToTarget = async (sessionName: string, windowTarget?: string) => {
     if (!activeTab || !activeProfile) return;
     const updatedProfile = {
       ...activeProfile,
       tmux_session_name: sessionName,
-      tmux_window_target: windowName || "",
+      tmux_window_target: windowTarget || "",
     };
-    await updateProfile(updatedProfile);
+    if (activeTab.ephemeralProfile) {
+      updateEphemeralProfile({ tabId: activeTab.id, profile: updatedProfile });
+    } else {
+      await updateProfile(updatedProfile);
+    }
 
     // Cleanly terminate active PTY sessions in layout tree to prevent zombie process leaks
     if (activeTab.layout) {
@@ -2313,7 +2522,10 @@ export default function App() {
           onAttachToTarget={handleAttachToTarget}
           onNewWindow={handleNewWindow}
           onKillWindow={handleKillWindow}
+          onRenameSession={handleRenameSessionDirect}
           onRenameWindow={handleRenameWindowDirect}
+          onRenamePane={handleRenamePaneDirect}
+          onResizePane={handleResizePaneDirect}
           onSelectPane={handleSelectPane}
         />
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100%", position: "relative" }}>
@@ -2325,9 +2537,9 @@ export default function App() {
               <span style={{ flex: 1, paddingRight: "12px" }}>
                 {activeTab.bannerMessage}
               </span>
-              {activeTab.state === "error" && activeHost && activeHost.auth_method !== "local" && (
+              {activeTab.state === "error" && (
                 <div style={{ display: "flex", gap: "8px", flexShrink: 0 }}>
-                  {!activeHost.skip_host_key_check && activeTab.bannerMessage.includes("code 255") && (
+                  {activeHost && activeHost.auth_method !== "local" && !activeHost.skip_host_key_check && activeTab.bannerMessage.includes("code 255") && (
                     <button
                       className="icon-btn"
                       style={{
@@ -2366,7 +2578,7 @@ export default function App() {
                       Trust Host &amp; Retry
                     </button>
                   )}
-                  {activeHost.key_path &&
+                  {activeHost && activeHost.auth_method !== "local" && activeHost.key_path &&
                     (activeTab.bannerMessage.includes("unprotected") ||
                       activeTab.bannerMessage.includes("permissions") ||
                       activeTab.bannerMessage.includes("ignored")) && (
@@ -2422,6 +2634,37 @@ export default function App() {
                         Fix Key Permissions &amp; Retry
                       </button>
                     )}
+                  <button
+                    className="icon-btn"
+                    style={{
+                      width: "auto",
+                      height: "auto",
+                      padding: "6px 12px",
+                      fontSize: "11px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      border: "1px solid var(--accent-dim)",
+                      background: "rgba(106, 169, 255, 0.1)",
+                      color: "var(--accent)",
+                      flexShrink: 0,
+                    }}
+                    onClick={() => {
+                      const paneId = activeTab.activePaneId;
+                      if (paneId) {
+                        updateTab({
+                          id: activeTab.id,
+                          patch: {
+                            state: "connecting",
+                            bannerMessage: "Retrying connection...",
+                          },
+                        });
+                        void launchSession(activeTab.id, paneId, "tmux");
+                      }
+                    }}
+                  >
+                    Retry Connection
+                  </button>
                 </div>
               )}
             </div>
@@ -2538,6 +2781,7 @@ export default function App() {
                     onApplyLayoutPreset={handleApplyLayoutPreset}
                     onRenameWindow={handleRenameWindow}
                     onRenamePane={handleRenamePane}
+                    onResizePane={handleResizePane}
                     nativeRenameDisabledReason={
                       nativeTmuxDisabledReason(host, "Native tmux rename")
                     }
@@ -2627,12 +2871,28 @@ export default function App() {
         <RenameWindowModal
           currentName={renameWindowReq.currentName}
           identityLabel={renameWindowReq.identityLabel}
-          title={renameWindowReq.kind === "pane" ? "Rename tmux pane" : "Rename tmux window"}
-          fieldLabel={renameWindowReq.kind === "pane" ? "Pane title" : "Window name"}
-          allowEmpty={renameWindowReq.kind === "pane"}
+          title={
+            renameWindowReq.kind === "pane" || renameWindowReq.kind === "pane-direct"
+              ? "Rename tmux pane"
+              : renameWindowReq.kind === "session-direct"
+                ? "Rename tmux screen"
+                : "Rename tmux window"
+          }
+          fieldLabel={
+            renameWindowReq.kind === "pane" || renameWindowReq.kind === "pane-direct"
+              ? "Pane title"
+              : renameWindowReq.kind === "session-direct"
+                ? "Screen name"
+                : "Window name"
+          }
+          allowEmpty={renameWindowReq.kind === "pane" || renameWindowReq.kind === "pane-direct"}
           onConfirm={(name) => {
             if (renameWindowReq.kind === "pane") {
               void submitRenamePane(renameWindowReq.paneId!, name);
+            } else if (renameWindowReq.kind === "pane-direct") {
+              void submitRenamePaneDirect(renameWindowReq.target!, name);
+            } else if (renameWindowReq.kind === "session-direct") {
+              void submitRenameSessionDirect(renameWindowReq.target!, name);
             } else if (renameWindowReq.kind === "window-direct") {
               void submitRenameWindowDirect(renameWindowReq.target!, name);
             } else {

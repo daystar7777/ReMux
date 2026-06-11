@@ -3107,6 +3107,7 @@ dependencies = [
  "dirs 5.0.1",
  "env_logger",
  "keyring",
+ "libc",
  "log",
  "once_cell",
  "portable-pty",

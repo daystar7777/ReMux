@@ -11,6 +11,7 @@ import {
   localeWarningAtom,
   mousePolicyAtom,
   openTabsAtom,
+  paneAgentStateAtom,
   type OpenTab,
 } from "../state/atoms";
 import { summarize } from "../lib/clipboard";
@@ -192,5 +193,24 @@ describe("StatusLine clipboard and IME indicators", () => {
 
     expect(document.body.textContent).toContain("[CLIPBOARD: Redacted Secret]");
     expect(document.body.textContent).not.toContain("ghp_1234567890");
+  });
+
+  it("renders active pane agent status", () => {
+    const store = renderStatusLine(keyHost);
+
+    act(() => {
+      store.set(paneAgentStateAtom, {
+        "pane-1": {
+          state: "working",
+          agentLabel: "Codex",
+          source: "process",
+          confidence: "medium",
+          updatedAt: Date.now(),
+          revision: 1,
+        },
+      });
+    });
+
+    expect(document.body.textContent).toContain("agent Codex working");
   });
 });
