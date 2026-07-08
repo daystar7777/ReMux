@@ -72,6 +72,23 @@ npm install
 npm run dev
 ```
 
+### Development / Running Server Reference
+
+The current development and local Git service host used for this project is:
+
+| Item | Value |
+| :--- | :--- |
+| Host | `daystar-HP-Z840-Workstation` |
+| Tailscale IP | `100.73.157.10` |
+| Project dashboard | `http://100.73.157.10:8787/` |
+| Local Gitea | `http://100.73.157.10:3030/daystar/ReMux` |
+| Local Git remote | `http://100.73.157.10:3030/daystar/ReMux.git` |
+| ServerDashBoard / LLM Wiki | `http://100.65.161.20:5001/#board` |
+
+Use this block to find the machine and local Git mirror later when working from a
+different device on the same Tailscale network. Use ServerDashBoard when checking
+current operational notes, LLM Wiki ingest rules, or cross-project server facts.
+
 ### Release Verification Gate
 
 To execute the strict production gate verifying typechecking, test suites, and tmux smoke tests:
